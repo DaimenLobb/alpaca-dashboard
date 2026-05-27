@@ -1,3 +1,5 @@
 streamlit
 pandas
-alpaca-py
+gspread
+google-auth
+google-auth-oauthlib
