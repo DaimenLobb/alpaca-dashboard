@@ -40,6 +40,18 @@ st.markdown(
             font-size: 1.05rem;
             line-height: 1.25rem;
         }
+        .positive-card {
+            border-left: 5px solid #00c853;
+            padding-left: 8px;
+        }
+        .negative-card {
+            border-left: 5px solid #ff5252;
+            padding-left: 8px;
+        }
+        .neutral-card {
+            border-left: 5px solid #9e9e9e;
+            padding-left: 8px;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -127,6 +139,32 @@ def load_sheet_data():
     return data_by_tab
 
 
+def calc_delta(df: pd.DataFrame, value_col: str = "equity"):
+    """Return latest value, previous value, delta, and delta percentage."""
+    if df.empty or value_col not in df.columns:
+        return 0.0, 0.0, 0.0, 0.0
+
+    latest_value = float(df.iloc[-1].get(value_col, 0) or 0)
+
+    if len(df) > 1:
+        previous_value = float(df.iloc[-2].get(value_col, latest_value) or latest_value)
+    else:
+        previous_value = latest_value
+
+    delta = latest_value - previous_value
+    delta_pct = 0.0 if previous_value == 0 else (delta / previous_value) * 100
+
+    return latest_value, previous_value, delta, delta_pct
+
+
+def trend_label(delta: float):
+    if delta > 0:
+        return "🟢 Positive", "normal"
+    if delta < 0:
+        return "🔴 Negative", "inverse"
+    return "⚪ Flat", "off"
+
+
 # ============================================================
 # LOAD DATA
 # ============================================================
@@ -173,8 +211,22 @@ if latest_rows:
         errors="coerce",
     ).fillna(0).sum()
 
+    # Portfolio delta based on last two combined rows per bot
+    total_delta = 0.0
+    total_previous = 0.0
+    for _, df in data_by_tab.items():
+        equity, previous_equity, delta, _ = calc_delta(df)
+        total_delta += delta
+        total_previous += previous_equity
+
+    total_delta_pct = 0 if total_previous == 0 else (total_delta / total_previous) * 100
+
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Total Equity", f"${total_equity:,.0f}")
+    s1.metric(
+        "Total Equity",
+        f"${total_equity:,.0f}",
+        f"{total_delta:+,.0f} ({total_delta_pct:+.2f}%)",
+    )
     s2.metric("Total Buying Power", f"${total_buying_power:,.0f}")
     s3.metric("Open Positions", int(total_positions))
     s4.metric("Open Orders", int(total_orders))
@@ -196,32 +248,33 @@ for row_start in range(0, len(bot_names), 3):
 
         with col:
             with st.container(border=True):
-                st.markdown(f"### {bot_name}")
-
                 if df.empty:
+                    st.markdown(f"### {bot_name}")
                     st.warning("No rows yet.")
                     continue
 
                 latest = df.iloc[-1]
 
-                equity = float(latest.get("equity", 0) or 0)
+                equity, previous_equity, delta, delta_pct = calc_delta(df)
+                trend_text, delta_color = trend_label(delta)
+
                 buying_power = float(latest.get("buying_power", 0) or 0)
                 open_positions = int(latest.get("open_positions", 0) or 0)
                 open_orders = int(latest.get("open_orders", 0) or 0)
 
-                previous_equity = equity
+                if delta > 0:
+                    st.success(f"{bot_name} — {trend_text}")
+                elif delta < 0:
+                    st.error(f"{bot_name} — {trend_text}")
+                else:
+                    st.info(f"{bot_name} — {trend_text}")
 
-if len(df) > 1:
-    previous_equity = float(df.iloc[-2].get("equity", equity) or equity)
-
-delta = equity - previous_equity
-delta_pct = 0 if previous_equity == 0 else (delta / previous_equity) * 100
-
-st.metric(
-    "Equity",
-    f"${equity:,.0f}",
-    f"{delta:+,.0f} ({delta_pct:+.2f}%)"
-)
+                st.metric(
+                    "Equity",
+                    f"${equity:,.0f}",
+                    f"{delta:+,.0f} ({delta_pct:+.2f}%)",
+                    delta_color=delta_color,
+                )
 
                 if "equity" in df.columns and "timestamp" in df.columns:
                     chart_df = (
@@ -245,9 +298,3 @@ st.metric(
                     st.dataframe(df.tail(10), use_container_width=True)
 
 st.caption("Dashboard refreshes Google Sheets data every 30 seconds.")
-
-
-
-
-
-
