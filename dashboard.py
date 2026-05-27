@@ -68,8 +68,36 @@ if not data_by_tab:
     st.warning("No bot rows found yet. Wait for a bot polling cycle, then refresh.")
     st.stop()
 
-bot_name = st.selectbox("Select bot", sorted(data_by_tab.keys()))
-df = data_by_tab[bot_name]
+for bot_name in sorted(data_by_tab.keys()):
+
+    st.header(bot_name)
+
+    df = data_by_tab[bot_name]
+
+    if df.empty:
+        st.warning("No rows yet.")
+        continue
+
+    latest = df.iloc[-1]
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Equity", f"${float(latest.get('equity', 0)):,.2f}")
+    col2.metric("Buying Power", f"${float(latest.get('buying_power', 0)):,.2f}")
+    col3.metric("Positions", int(latest.get("open_positions", 0) or 0))
+    col4.metric("Orders", int(latest.get("open_orders", 0) or 0))
+
+    if "equity" in df.columns and "timestamp" in df.columns:
+        chart_df = (
+            df.set_index("timestamp")[["equity"]]
+            .apply(pd.to_numeric, errors="coerce")
+        )
+
+        st.line_chart(chart_df)
+
+    st.dataframe(df.tail(10), use_container_width=True)
+
+    st.divider()
 
 if df.empty:
     st.warning("This bot tab has no rows yet.")
