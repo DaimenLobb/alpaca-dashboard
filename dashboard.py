@@ -41,7 +41,8 @@ def get_credentials():
 def load_sheet_data():
     creds = get_credentials()
     client = gspread.authorize(creds)
-    spreadsheet = client.open_by_key(st.secrets["SPREADSHEET_ID"])
+    spreadsheet = client.open_by_key(
+    st.secrets["gcp_service_account_extra"]["SPREADSHEET_ID"]
 
     data_by_tab = {}
     for worksheet in spreadsheet.worksheets():
