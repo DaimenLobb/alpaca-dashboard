@@ -95,3 +95,4 @@ if "buying_power" in df.columns and "timestamp" in df.columns:
 st.subheader("Latest Snapshots")
 st.dataframe(df.tail(50), use_container_width=True)
 
+
