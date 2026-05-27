@@ -68,7 +68,49 @@ if not data_by_tab:
     st.warning("No bot rows found yet. Wait for a bot polling cycle, then refresh.")
     st.stop()
 
-for bot_name in sorted(data_by_tab.keys()):
+bot_names = sorted(data_by_tab.keys())
+
+cols = st.columns(3)
+
+for i, bot_name in enumerate(bot_names):
+
+    with cols[i % 3]:
+
+        df = data_by_tab[bot_name]
+
+        st.subheader(bot_name)
+
+        if df.empty:
+            st.warning("No rows yet.")
+            continue
+
+        latest = df.iloc[-1]
+
+        st.metric(
+            "Equity",
+            f"${float(latest.get('equity', 0)):,.0f}"
+        )
+
+        if "equity" in df.columns and "timestamp" in df.columns:
+
+            chart_df = (
+                df.set_index("timestamp")[["equity"]]
+                .apply(pd.to_numeric, errors="coerce")
+            )
+
+            st.line_chart(chart_df, height=180)
+
+        st.caption(
+            f"BP: ${float(latest.get('buying_power', 0)):,.0f}"
+        )
+
+        st.caption(
+            f"Positions: {int(latest.get('open_positions', 0) or 0)}"
+        )
+
+        st.caption(
+            f"Orders: {int(latest.get('open_orders', 0) or 0)}"
+        )
 
     st.header(bot_name)
 
