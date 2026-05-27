@@ -209,7 +209,19 @@ for row_start in range(0, len(bot_names), 3):
                 open_positions = int(latest.get("open_positions", 0) or 0)
                 open_orders = int(latest.get("open_orders", 0) or 0)
 
-                st.metric("Equity", f"${equity:,.0f}")
+                previous_equity = equity
+
+if len(df) > 1:
+    previous_equity = float(df.iloc[-2].get("equity", equity) or equity)
+
+delta = equity - previous_equity
+delta_pct = 0 if previous_equity == 0 else (delta / previous_equity) * 100
+
+st.metric(
+    "Equity",
+    f"${equity:,.0f}",
+    f"{delta:+,.0f} ({delta_pct:+.2f}%)"
+)
 
                 if "equity" in df.columns and "timestamp" in df.columns:
                     chart_df = (
