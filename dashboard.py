@@ -43,6 +43,7 @@ def load_sheet_data():
     client = gspread.authorize(creds)
     spreadsheet = client.open_by_key(
     st.secrets["gcp_service_account_extra"]["SPREADSHEET_ID"]
+)
 
     data_by_tab = {}
     for worksheet in spreadsheet.worksheets():
