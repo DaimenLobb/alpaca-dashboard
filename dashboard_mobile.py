@@ -374,7 +374,10 @@ with s2:
         unsafe_allow_html=True,
     )
 
-st.markdown('<div class="section-title">Bots</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="section-title">Bots</div>',
+    unsafe_allow_html=True,
+)
 
 valid_rows.sort(key=lambda r: (r["pnl"] >= 0, abs(r["pnl"])), reverse=False)
 
