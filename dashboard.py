@@ -160,6 +160,9 @@ def get_spreadsheet_id() -> str:
     if "SPREADSHEET_ID" in st.secrets:
         return st.secrets["SPREADSHEET_ID"]
 
+    if "gcp_service_account_extra" in st.secrets:
+        return st.secrets["gcp_service_account_extra"]["SPREADSHEET_ID"]
+
     st.error("Missing SPREADSHEET_ID in Streamlit Secrets.")
     st.stop()
 
