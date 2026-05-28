@@ -51,6 +51,33 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 .trade-pnl-positive { color: #00e676; }
 .trade-pnl-negative { color: #ff5252; }
 .trade-pnl-flat { color: #cfd8dc; }
+
+    div[data-testid="stExpander"] {
+        border: 1px solid rgba(255,255,255,0.28) !important;
+        border-radius: 16px !important;
+        background: rgba(255,255,255,0.095) !important;
+        margin-top: -4px !important;
+        margin-bottom: 18px !important;
+        box-shadow: 0 8px 22px rgba(0,0,0,0.24);
+    }
+
+    div[data-testid="stExpander"] details summary {
+        color: #f5f7fa !important;
+        font-size: 0.88rem !important;
+        font-weight: 900 !important;
+        padding: 10px 12px !important;
+    }
+
+    div[data-testid="stExpander"] details summary p {
+        color: #f5f7fa !important;
+        font-weight: 900 !important;
+    }
+
+    div[data-testid="stExpander"] svg {
+        color: #00e676 !important;
+        fill: #00e676 !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -231,7 +258,7 @@ for row in valid_rows:
     cls = pnl_class(row["pnl"])
     html = (f'<div class="bot-row bot-row-{cls}"><div class="bot-topline"><div class="bot-name">{row["bot_name"]}</div><div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div></div><div class="bot-subline"><span>Equity {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div><div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div><div class="tiny">Last: {row["last_update"]}</div></div>')
     render_html(html)
-    with st.expander(f'Tap for trades - {row["bot_name"]}', expanded=False):
+    with st.expander(f'📊 View trades ({row["trades"]})', expanded=False):
         trades = row["session_trades"]
         if trades is None or trades.empty:
             st.caption("No trades logged for this session yet.")
