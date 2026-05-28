@@ -23,34 +23,143 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+        .stApp {
+            background:
+                radial-gradient(circle at top left, rgba(0, 200, 83, 0.12), transparent 25%),
+                radial-gradient(circle at top right, rgba(0, 176, 255, 0.10), transparent 25%),
+                #0b0f14;
+        }
+
         .block-container {
-            padding-top: 2rem;
+            padding-top: 1.5rem;
             padding-bottom: 2rem;
+            max-width: 1600px;
         }
-        div[data-testid="stMetric"] {
-            background-color: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 12px;
-            border-radius: 14px;
-        }
+
         h1 {
-            margin-bottom: 0.25rem;
+            font-size: 2.4rem !important;
+            font-weight: 800 !important;
+            margin-bottom: 0.2rem !important;
+            letter-spacing: -0.03em;
         }
+
         h3 {
-            font-size: 1.05rem;
-            line-height: 1.25rem;
+            font-size: 1.0rem !important;
+            line-height: 1.25rem !important;
         }
-        .positive-card {
-            border-left: 5px solid #00c853;
-            padding-left: 8px;
+
+        div[data-testid="stMetric"] {
+            background: linear-gradient(145deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025));
+            border: 1px solid rgba(255,255,255,0.10);
+            padding: 14px;
+            border-radius: 16px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.20);
         }
-        .negative-card {
-            border-left: 5px solid #ff5252;
-            padding-left: 8px;
+
+        div[data-testid="stMetricValue"] {
+            font-size: 1.85rem;
+            font-weight: 800;
         }
-        .neutral-card {
-            border-left: 5px solid #9e9e9e;
-            padding-left: 8px;
+
+        .portfolio-card {
+            padding: 16px 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.025));
+            box-shadow: 0 10px 32px rgba(0,0,0,0.25);
+            margin-bottom: 12px;
+        }
+
+        .bot-card {
+            padding: 0;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025));
+            box-shadow: 0 10px 34px rgba(0,0,0,0.28);
+            overflow: hidden;
+            margin-bottom: 18px;
+        }
+
+        .bot-header {
+            padding: 12px 14px;
+            color: white;
+            font-weight: 800;
+            font-size: 0.88rem;
+            letter-spacing: 0.01em;
+            min-height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .bot-body {
+            padding: 14px;
+        }
+
+        .status-pill {
+            font-size: 0.72rem;
+            font-weight: 800;
+            padding: 5px 9px;
+            border-radius: 999px;
+            background: rgba(0,0,0,0.25);
+            border: 1px solid rgba(255,255,255,0.20);
+            white-space: nowrap;
+        }
+
+        .header-positive {
+            background: linear-gradient(90deg, #007a3d, #00c853);
+            box-shadow: inset 0 -1px 0 rgba(255,255,255,0.16);
+        }
+
+        .header-negative {
+            background: linear-gradient(90deg, #8b1f1f, #ff5252);
+            box-shadow: inset 0 -1px 0 rgba(255,255,255,0.16);
+        }
+
+        .header-flat {
+            background: linear-gradient(90deg, #263238, #546e7a);
+            box-shadow: inset 0 -1px 0 rgba(255,255,255,0.16);
+        }
+
+        .mini-label {
+            color: rgba(255,255,255,0.62);
+            font-size: 0.72rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 2px;
+        }
+
+        .mini-value {
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        .mini-box {
+            padding: 10px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.10);
+            background: rgba(255,255,255,0.035);
+            min-height: 72px;
+        }
+
+        .last-seen {
+            color: rgba(255,255,255,0.50);
+            font-size: 0.72rem;
+            margin-top: 8px;
+        }
+
+        .divider-soft {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+            margin: 18px 0;
+        }
+
+        .stExpander {
+            border: 1px solid rgba(255,255,255,0.10) !important;
+            border-radius: 14px !important;
+            overflow: hidden;
         }
     </style>
     """,
@@ -72,7 +181,6 @@ SCOPES = [
 
 
 def get_spreadsheet_id() -> str:
-    """Read spreadsheet ID from Streamlit secrets."""
     if "SPREADSHEET_ID" in st.secrets:
         return st.secrets["SPREADSHEET_ID"]
 
@@ -81,32 +189,19 @@ def get_spreadsheet_id() -> str:
         if "SPREADSHEET_ID" in extra:
             return extra["SPREADSHEET_ID"]
 
-    st.error(
-        "Missing SPREADSHEET_ID in Streamlit Secrets. Add it under "
-        "[gcp_service_account_extra]."
-    )
+    st.error("Missing SPREADSHEET_ID in Streamlit Secrets.")
     st.stop()
 
 
 def get_credentials():
-    """Use Streamlit secrets in cloud, or google_credentials.json locally."""
     if "gcp_service_account" in st.secrets:
         service_account_info = dict(st.secrets["gcp_service_account"])
-        return Credentials.from_service_account_info(
-            service_account_info,
-            scopes=SCOPES,
-        )
+        return Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 
     if os.path.exists("google_credentials.json"):
-        return Credentials.from_service_account_file(
-            "google_credentials.json",
-            scopes=SCOPES,
-        )
+        return Credentials.from_service_account_file("google_credentials.json", scopes=SCOPES)
 
-    st.error(
-        "No Google credentials found. In Streamlit Cloud, add your JSON values "
-        "under [gcp_service_account] in App settings → Secrets."
-    )
+    st.error("No Google credentials found.")
     st.stop()
 
 
@@ -114,13 +209,11 @@ def get_credentials():
 def load_sheet_data():
     creds = get_credentials()
     client = gspread.authorize(creds)
-
     spreadsheet = client.open_by_key(get_spreadsheet_id())
 
     data_by_tab = {}
     for worksheet in spreadsheet.worksheets():
         rows = worksheet.get_all_records()
-
         if not rows:
             continue
 
@@ -140,7 +233,6 @@ def load_sheet_data():
 
 
 def calc_delta(df: pd.DataFrame, value_col: str = "equity"):
-    """Return latest value, previous value, delta, and delta percentage."""
     if df.empty or value_col not in df.columns:
         return 0.0, 0.0, 0.0, 0.0
 
@@ -157,12 +249,16 @@ def calc_delta(df: pd.DataFrame, value_col: str = "equity"):
     return latest_value, previous_value, delta, delta_pct
 
 
-def trend_label(delta: float):
+def trend_style(delta: float):
     if delta > 0:
-        return "🟢 Positive", "normal"
+        return "header-positive", "🟢 UP", "normal"
     if delta < 0:
-        return "🔴 Negative", "inverse"
-    return "⚪ Flat", "off"
+        return "header-negative", "🔴 DOWN", "inverse"
+    return "header-flat", "⚪ FLAT", "off"
+
+
+def money(value):
+    return f"${float(value or 0):,.0f}"
 
 
 # ============================================================
@@ -185,11 +281,9 @@ if not data_by_tab:
 # ============================================================
 
 latest_rows = []
-
 for bot_name, df in data_by_tab.items():
     if df.empty:
         continue
-
     latest = df.iloc[-1].copy()
     latest["bot"] = bot_name
     latest_rows.append(latest)
@@ -198,40 +292,26 @@ if latest_rows:
     latest_df = pd.DataFrame(latest_rows)
 
     total_equity = pd.to_numeric(latest_df.get("equity", 0), errors="coerce").sum()
-    total_buying_power = pd.to_numeric(
-        latest_df.get("buying_power", 0),
-        errors="coerce",
-    ).sum()
-    total_positions = pd.to_numeric(
-        latest_df.get("open_positions", 0),
-        errors="coerce",
-    ).fillna(0).sum()
-    total_orders = pd.to_numeric(
-        latest_df.get("open_orders", 0),
-        errors="coerce",
-    ).fillna(0).sum()
+    total_buying_power = pd.to_numeric(latest_df.get("buying_power", 0), errors="coerce").sum()
+    total_positions = pd.to_numeric(latest_df.get("open_positions", 0), errors="coerce").fillna(0).sum()
+    total_orders = pd.to_numeric(latest_df.get("open_orders", 0), errors="coerce").fillna(0).sum()
 
-    # Portfolio delta based on last two combined rows per bot
     total_delta = 0.0
     total_previous = 0.0
     for _, df in data_by_tab.items():
-        equity, previous_equity, delta, _ = calc_delta(df)
+        _, previous_equity, delta, _ = calc_delta(df)
         total_delta += delta
         total_previous += previous_equity
 
     total_delta_pct = 0 if total_previous == 0 else (total_delta / total_previous) * 100
 
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric(
-        "Total Equity",
-        f"${total_equity:,.0f}",
-        f"{total_delta:+,.0f} ({total_delta_pct:+.2f}%)",
-    )
-    s2.metric("Total Buying Power", f"${total_buying_power:,.0f}")
-    s3.metric("Open Positions", int(total_positions))
-    s4.metric("Open Orders", int(total_orders))
+    s1.metric("Total Equity", f"${total_equity:,.0f}", f"{total_delta:+,.0f} ({total_delta_pct:+.2f}%)")
+    s2.metric("Buying Power", f"${total_buying_power:,.0f}")
+    s3.metric("Positions", int(total_positions))
+    s4.metric("Orders", int(total_orders))
 
-st.divider()
+st.markdown('<div class="divider-soft"></div>', unsafe_allow_html=True)
 
 
 # ============================================================
@@ -247,54 +327,72 @@ for row_start in range(0, len(bot_names), 3):
         df = data_by_tab[bot_name]
 
         with col:
-            with st.container(border=True):
-                if df.empty:
-                    st.markdown(f"### {bot_name}")
-                    st.warning("No rows yet.")
-                    continue
-
-                latest = df.iloc[-1]
-
-                equity, previous_equity, delta, delta_pct = calc_delta(df)
-                trend_text, delta_color = trend_label(delta)
-
-                buying_power = float(latest.get("buying_power", 0) or 0)
-                open_positions = int(latest.get("open_positions", 0) or 0)
-                open_orders = int(latest.get("open_orders", 0) or 0)
-
-                if delta > 0:
-                    st.success(f"{bot_name} — {trend_text}")
-                elif delta < 0:
-                    st.error(f"{bot_name} — {trend_text}")
-                else:
-                    st.info(f"{bot_name} — {trend_text}")
-
-                st.metric(
-                    "Equity",
-                    f"${equity:,.0f}",
-                    f"{delta:+,.0f} ({delta_pct:+.2f}%)",
-                    delta_color=delta_color,
+            if df.empty:
+                st.markdown(
+                    f"""
+                    <div class="bot-card">
+                        <div class="bot-header header-flat">
+                            <span>{bot_name}</span>
+                            <span class="status-pill">NO DATA</span>
+                        </div>
+                        <div class="bot-body">No rows yet.</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
+                continue
 
-                if "equity" in df.columns and "timestamp" in df.columns:
-                    chart_df = (
-                        df.set_index("timestamp")[["equity"]]
-                        .apply(pd.to_numeric, errors="coerce")
-                    )
-                    st.line_chart(chart_df, height=140)
-                else:
-                    st.info("No equity data yet.")
+            latest = df.iloc[-1]
+            equity, _, delta, delta_pct = calc_delta(df)
+            header_class, status_text, delta_color = trend_style(delta)
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("BP", f"${buying_power:,.0f}")
-                c2.metric("Pos", open_positions)
-                c3.metric("Orders", open_orders)
+            buying_power = float(latest.get("buying_power", 0) or 0)
+            open_positions = int(latest.get("open_positions", 0) or 0)
+            open_orders = int(latest.get("open_orders", 0) or 0)
 
-                if "timestamp" in df.columns:
-                    last_seen = latest.get("timestamp")
-                    st.caption(f"Last update: {last_seen}")
+            st.markdown(
+                f"""
+                <div class="bot-card">
+                    <div class="bot-header {header_class}">
+                        <span>{bot_name}</span>
+                        <span class="status-pill">{status_text}</span>
+                    </div>
+                    <div class="bot-body">
+                """,
+                unsafe_allow_html=True,
+            )
 
-                with st.expander("Latest rows"):
-                    st.dataframe(df.tail(10), use_container_width=True)
+            st.metric(
+                "Equity",
+                f"${equity:,.0f}",
+                f"{delta:+,.0f} ({delta_pct:+.2f}%)",
+                delta_color=delta_color,
+            )
+
+            if "equity" in df.columns and "timestamp" in df.columns:
+                chart_df = (
+                    df.set_index("timestamp")[["equity"]]
+                    .apply(pd.to_numeric, errors="coerce")
+                )
+                st.line_chart(chart_df, height=135)
+            else:
+                st.info("No equity data yet.")
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown(f'<div class="mini-box"><div class="mini-label">BP</div><div class="mini-value">{money(buying_power)}</div></div>', unsafe_allow_html=True)
+            with c2:
+                st.markdown(f'<div class="mini-box"><div class="mini-label">Pos</div><div class="mini-value">{open_positions}</div></div>', unsafe_allow_html=True)
+            with c3:
+                st.markdown(f'<div class="mini-box"><div class="mini-label">Orders</div><div class="mini-value">{open_orders}</div></div>', unsafe_allow_html=True)
+
+            if "timestamp" in df.columns:
+                last_seen = latest.get("timestamp")
+                st.markdown(f'<div class="last-seen">Last update: {last_seen}</div>', unsafe_allow_html=True)
+
+            with st.expander("Snapshot rows"):
+                st.dataframe(df.tail(10), use_container_width=True)
+
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
 st.caption("Dashboard refreshes Google Sheets data every 30 seconds.")
