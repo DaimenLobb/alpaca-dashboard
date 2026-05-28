@@ -17,174 +17,171 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown(
-    """
-    <style>
-        .stApp {
-            background: #101820;
-        }
+st.markdown("""
+<style>
+    .stApp {
+        background: #101820;
+    }
 
-        .block-container {
-            padding-top: 0.45rem;
-            padding-left: 0.75rem;
-            padding-right: 0.75rem;
-            padding-bottom: 2rem;
-            max-width: 900px;
-        }
+    .block-container {
+        padding-top: 0.45rem;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        padding-bottom: 2rem;
+        max-width: 900px;
+    }
 
-        header[data-testid="stHeader"] {
-            background: rgba(16,24,32,0.92);
-        }
+    header[data-testid="stHeader"] {
+        background: rgba(16,24,32,0.92);
+    }
 
-        #MainMenu, footer {
-            visibility: hidden;
-        }
+    #MainMenu, footer {
+        visibility: hidden;
+    }
 
-        h1 {
-            font-size: 1.65rem !important;
-            line-height: 1.85rem !important;
-            font-weight: 900 !important;
-            color: #f5f7fa !important;
-            margin-bottom: 0.1rem !important;
-            letter-spacing: -0.04em;
-        }
+    h1 {
+        font-size: 1.65rem !important;
+        line-height: 1.85rem !important;
+        font-weight: 900 !important;
+        color: #f5f7fa !important;
+        margin-bottom: 0.1rem !important;
+        letter-spacing: -0.04em;
+    }
 
-        div[data-testid="stCaptionContainer"] p {
-            color: #d6e2ea !important;
-            font-size: 0.82rem;
-        }
+    div[data-testid="stCaptionContainer"] p {
+        color: #d6e2ea !important;
+        font-size: 0.82rem;
+    }
 
-        .summary-card {
-            border-radius: 20px;
-            border: 1px solid rgba(255,255,255,0.18);
-            background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08));
-            padding: 14px;
-            margin-bottom: 12px;
-            box-shadow: 0 10px 28px rgba(0,0,0,0.35);
-        }
+    .summary-card {
+        border-radius: 20px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08));
+        padding: 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.35);
+    }
 
-        .summary-label {
-            color: #d6e2ea;
-            font-size: 0.75rem;
-            font-weight: 800;
-            text-transform: uppercase;
-            margin-bottom: 3px;
-        }
+    .summary-label {
+        color: #d6e2ea;
+        font-size: 0.75rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        margin-bottom: 3px;
+    }
 
-        .summary-value {
-            color: white;
-            font-size: 2rem;
-            font-weight: 900;
-            line-height: 2.15rem;
-        }
+    .summary-value {
+        color: white;
+        font-size: 2rem;
+        font-weight: 900;
+        line-height: 2.15rem;
+    }
 
-        .summary-pnl-positive {
-            color: #00e676;
-            font-weight: 900;
-            font-size: 1rem;
-            margin-top: 3px;
-        }
+    .summary-pnl-positive {
+        color: #00e676;
+        font-weight: 900;
+        font-size: 1rem;
+        margin-top: 3px;
+    }
 
-        .summary-pnl-negative {
-            color: #ff5252;
-            font-weight: 900;
-            font-size: 1rem;
-            margin-top: 3px;
-        }
+    .summary-pnl-negative {
+        color: #ff5252;
+        font-weight: 900;
+        font-size: 1rem;
+        margin-top: 3px;
+    }
 
-        .summary-pnl-flat {
-            color: #cfd8dc;
-            font-weight: 900;
-            font-size: 1rem;
-            margin-top: 3px;
-        }
+    .summary-pnl-flat {
+        color: #cfd8dc;
+        font-weight: 900;
+        font-size: 1rem;
+        margin-top: 3px;
+    }
 
-        .bot-row {
-            border-radius: 18px;
-            border: 1px solid rgba(255,255,255,0.16);
-            padding: 12px 13px;
-            margin-bottom: 10px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.28);
-        }
+    .bot-row {
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.16);
+        padding: 12px 13px;
+        margin-bottom: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+    }
 
-        .bot-row-positive {
-            background: linear-gradient(90deg, rgba(0,200,83,0.28), rgba(0,200,83,0.09));
-            border-left: 7px solid #00e676;
-        }
+    .bot-row-positive {
+        background: linear-gradient(90deg, rgba(0,200,83,0.28), rgba(0,200,83,0.09));
+        border-left: 7px solid #00e676;
+    }
 
-        .bot-row-negative {
-            background: linear-gradient(90deg, rgba(255,82,82,0.28), rgba(255,82,82,0.09));
-            border-left: 7px solid #ff5252;
-        }
+    .bot-row-negative {
+        background: linear-gradient(90deg, rgba(255,82,82,0.28), rgba(255,82,82,0.09));
+        border-left: 7px solid #ff5252;
+    }
 
-        .bot-row-flat {
-            background: linear-gradient(90deg, rgba(96,125,139,0.30), rgba(96,125,139,0.10));
-            border-left: 7px solid #b0bec5;
-        }
+    .bot-row-flat {
+        background: linear-gradient(90deg, rgba(96,125,139,0.30), rgba(96,125,139,0.10));
+        border-left: 7px solid #b0bec5;
+    }
 
-        .bot-topline {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 10px;
-        }
+    .bot-topline {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+    }
 
-        .bot-name {
-            color: white;
-            font-size: 0.95rem;
-            font-weight: 900;
-            line-height: 1.15rem;
-        }
+    .bot-name {
+        color: white;
+        font-size: 0.95rem;
+        font-weight: 900;
+        line-height: 1.15rem;
+    }
 
-        .bot-pnl-positive {
-            color: #00e676;
-            font-size: 1.15rem;
-            font-weight: 900;
-            white-space: nowrap;
-        }
+    .bot-pnl-positive {
+        color: #00e676;
+        font-size: 1.15rem;
+        font-weight: 900;
+        white-space: nowrap;
+    }
 
-        .bot-pnl-negative {
-            color: #ff5252;
-            font-size: 1.15rem;
-            font-weight: 900;
-            white-space: nowrap;
-        }
+    .bot-pnl-negative {
+        color: #ff5252;
+        font-size: 1.15rem;
+        font-weight: 900;
+        white-space: nowrap;
+    }
 
-        .bot-pnl-flat {
-            color: #cfd8dc;
-            font-size: 1.15rem;
-            font-weight: 900;
-            white-space: nowrap;
-        }
+    .bot-pnl-flat {
+        color: #cfd8dc;
+        font-size: 1.15rem;
+        font-weight: 900;
+        white-space: nowrap;
+    }
 
-        .bot-subline {
-            display: flex;
-            justify-content: space-between;
-            gap: 8px;
-            margin-top: 8px;
-            color: #d6e2ea;
-            font-size: 0.76rem;
-            font-weight: 700;
-        }
+    .bot-subline {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        margin-top: 8px;
+        color: #d6e2ea;
+        font-size: 0.76rem;
+        font-weight: 700;
+    }
 
-        .tiny {
-            color: #90a4ae;
-            font-size: 0.68rem;
-            margin-top: 5px;
-        }
+    .tiny {
+        color: #90a4ae;
+        font-size: 0.68rem;
+        margin-top: 5px;
+    }
 
-        .section-title {
-            color: #f5f7fa;
-            font-size: 0.9rem;
-            font-weight: 900;
-            text-transform: uppercase;
-            margin: 16px 0 8px 0;
-            letter-spacing: 0.04em;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+    .section-title {
+        color: #f5f7fa;
+        font-size: 0.9rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        margin: 16px 0 8px 0;
+        letter-spacing: 0.04em;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
 st.caption("Quick overnight view: bot P&L, equity, positions, orders")
@@ -294,6 +291,10 @@ def pnl_class(pnl):
     return "flat"
 
 
+def render_html(html):
+    st.markdown(html, unsafe_allow_html=True)
+
+
 try:
     data_by_tab, trades_by_tab = load_sheet_data()
 except Exception as e:
@@ -339,74 +340,58 @@ total_orders = sum(r["orders"] for r in valid_rows)
 
 cls = pnl_class(total_pnl)
 
-st.markdown(
-    f"""
-    <div class="summary-card">
-        <div class="summary-label">Total Equity</div>
-        <div class="summary-value">{money(total_equity)}</div>
-        <div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+render_html(
+    f'<div class="summary-card">'
+    f'<div class="summary-label">Total Equity</div>'
+    f'<div class="summary-value">{money(total_equity)}</div>'
+    f'<div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div>'
+    f'</div>'
 )
 
 s1, s2 = st.columns(2)
 
 with s1:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Buying Power</div>
-            <div class="summary-value" style="font-size:1.35rem;">{money(total_bp)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    render_html(
+        f'<div class="summary-card">'
+        f'<div class="summary-label">Buying Power</div>'
+        f'<div class="summary-value" style="font-size:1.35rem;">{money(total_bp)}</div>'
+        f'</div>'
     )
 
 with s2:
-    st.markdown(
-        f"""
-        <div class="summary-card">
-            <div class="summary-label">Open Risk</div>
-            <div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    render_html(
+        f'<div class="summary-card">'
+        f'<div class="summary-label">Open Risk</div>'
+        f'<div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div>'
+        f'</div>'
     )
 
-st.markdown(
-    '<div class="section-title">Bots</div>',
-    unsafe_allow_html=True,
-)
+render_html('<div class="section-title">Bots</div>')
 
 valid_rows.sort(key=lambda r: (r["pnl"] >= 0, abs(r["pnl"])), reverse=False)
 
 for row in valid_rows:
     cls = pnl_class(row["pnl"])
 
-    st.markdown(
-        f"""
-        <div class="bot-row bot-row-{cls}">
-            <div class="bot-topline">
-                <div class="bot-name">{row["bot_name"]}</div>
-                <div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>
-            </div>
-
-            <div class="bot-subline">
-                <span>Equity {money(row["equity"])}</span>
-                <span>{row["pct"]:+.2f}%</span>
-            </div>
-
-            <div class="bot-subline">
-                <span>Pos {row["positions"]}</span>
-                <span>Orders {row["orders"]}</span>
-                <span>Trades {row["trades"]}</span>
-            </div>
-
-            <div class="tiny">Last: {row["last_update"]}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    html = (
+        f'<div class="bot-row bot-row-{cls}">'
+        f'<div class="bot-topline">'
+        f'<div class="bot-name">{row["bot_name"]}</div>'
+        f'<div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>'
+        f'</div>'
+        f'<div class="bot-subline">'
+        f'<span>Equity {money(row["equity"])}</span>'
+        f'<span>{row["pct"]:+.2f}%</span>'
+        f'</div>'
+        f'<div class="bot-subline">'
+        f'<span>Pos {row["positions"]}</span>'
+        f'<span>Orders {row["orders"]}</span>'
+        f'<span>Trades {row["trades"]}</span>'
+        f'</div>'
+        f'<div class="tiny">Last: {row["last_update"]}</div>'
+        f'</div>'
     )
+
+    render_html(html)
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
