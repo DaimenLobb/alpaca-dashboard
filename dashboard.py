@@ -282,9 +282,18 @@ def load_sheet_data():
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
         title = worksheet.title
+
         if title.endswith(" Trades"):
             trade_tabs[title.replace(" Trades", "")] = df
         else:
+            # Ignore broken snapshot rows where equity logged as blank/zero.
+            # This prevents one bad row from making a bot display $0.
+            if "equity" in df.columns:
+                df = df[df["equity"].fillna(0) > 0]
+
+            if "buying_power" in df.columns:
+                df["buying_power"] = df["buying_power"].fillna(0)
+
             snapshot_tabs[title] = df
 
     return snapshot_tabs, trade_tabs
