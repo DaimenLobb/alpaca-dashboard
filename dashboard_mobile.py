@@ -78,6 +78,56 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
         fill: #00e676 !important;
     }
 
+
+    /* Hide Streamlit mobile/desktop toolbar and header */
+    #MainMenu {
+        visibility: hidden !important;
+        display: none !important;
+    }
+
+    footer {
+        visibility: hidden !important;
+        display: none !important;
+    }
+
+    header {
+        visibility: hidden !important;
+        display: none !important;
+        height: 0rem !important;
+    }
+
+    [data-testid="stHeader"] {
+        visibility: hidden !important;
+        display: none !important;
+        height: 0rem !important;
+    }
+
+    [data-testid="stToolbar"] {
+        visibility: hidden !important;
+        display: none !important;
+    }
+
+    [data-testid="stDecoration"] {
+        display: none !important;
+    }
+
+    [data-testid="stStatusWidget"] {
+        visibility: hidden !important;
+        display: none !important;
+    }
+
+    .viewerBadge_container__1QSob {
+        display: none !important;
+    }
+
+    .stDeployButton {
+        display: none !important;
+    }
+
+    .block-container {
+        padding-top: 0.25rem !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
