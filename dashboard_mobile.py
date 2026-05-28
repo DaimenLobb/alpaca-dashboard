@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 
 import pandas as pd
 import streamlit as st
@@ -10,209 +11,71 @@ except ImportError:
     st.error("Missing packages. Add gspread and google-auth to requirements.txt")
     st.stop()
 
-
-st.set_page_config(
-    page_title="Alpaca Bot Sleep Check",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title="Alpaca Bot Sleep Check", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-    .stApp {
-        background: #101820;
-    }
-
-    .block-container {
-        padding-top: 0.45rem;
-        padding-left: 0.75rem;
-        padding-right: 0.75rem;
-        padding-bottom: 2rem;
-        max-width: 900px;
-    }
-
-    header[data-testid="stHeader"] {
-        background: rgba(16,24,32,0.92);
-    }
-
-    #MainMenu, footer {
-        visibility: hidden;
-    }
-
-    h1 {
-        font-size: 1.65rem !important;
-        line-height: 1.85rem !important;
-        font-weight: 900 !important;
-        color: #f5f7fa !important;
-        margin-bottom: 0.1rem !important;
-        letter-spacing: -0.04em;
-    }
-
-    div[data-testid="stCaptionContainer"] p {
-        color: #d6e2ea !important;
-        font-size: 0.82rem;
-    }
-
-    .summary-card {
-        border-radius: 20px;
-        border: 1px solid rgba(255,255,255,0.18);
-        background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08));
-        padding: 14px;
-        margin-bottom: 12px;
-        box-shadow: 0 10px 28px rgba(0,0,0,0.35);
-    }
-
-    .summary-label {
-        color: #d6e2ea;
-        font-size: 0.75rem;
-        font-weight: 800;
-        text-transform: uppercase;
-        margin-bottom: 3px;
-    }
-
-    .summary-value {
-        color: white;
-        font-size: 2rem;
-        font-weight: 900;
-        line-height: 2.15rem;
-    }
-
-    .summary-pnl-positive {
-        color: #00e676;
-        font-weight: 900;
-        font-size: 1rem;
-        margin-top: 3px;
-    }
-
-    .summary-pnl-negative {
-        color: #ff5252;
-        font-weight: 900;
-        font-size: 1rem;
-        margin-top: 3px;
-    }
-
-    .summary-pnl-flat {
-        color: #cfd8dc;
-        font-weight: 900;
-        font-size: 1rem;
-        margin-top: 3px;
-    }
-
-    .bot-row {
-        border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.16);
-        padding: 12px 13px;
-        margin-bottom: 10px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.28);
-    }
-
-    .bot-row-positive {
-        background: linear-gradient(90deg, rgba(0,200,83,0.28), rgba(0,200,83,0.09));
-        border-left: 7px solid #00e676;
-    }
-
-    .bot-row-negative {
-        background: linear-gradient(90deg, rgba(255,82,82,0.28), rgba(255,82,82,0.09));
-        border-left: 7px solid #ff5252;
-    }
-
-    .bot-row-flat {
-        background: linear-gradient(90deg, rgba(96,125,139,0.30), rgba(96,125,139,0.10));
-        border-left: 7px solid #b0bec5;
-    }
-
-    .bot-topline {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 10px;
-    }
-
-    .bot-name {
-        color: white;
-        font-size: 0.95rem;
-        font-weight: 900;
-        line-height: 1.15rem;
-    }
-
-    .bot-pnl-positive {
-        color: #00e676;
-        font-size: 1.15rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .bot-pnl-negative {
-        color: #ff5252;
-        font-size: 1.15rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .bot-pnl-flat {
-        color: #cfd8dc;
-        font-size: 1.15rem;
-        font-weight: 900;
-        white-space: nowrap;
-    }
-
-    .bot-subline {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        margin-top: 8px;
-        color: #d6e2ea;
-        font-size: 0.76rem;
-        font-weight: 700;
-    }
-
-    .tiny {
-        color: #90a4ae;
-        font-size: 0.68rem;
-        margin-top: 5px;
-    }
-
-    .section-title {
-        color: #f5f7fa;
-        font-size: 0.9rem;
-        font-weight: 900;
-        text-transform: uppercase;
-        margin: 16px 0 8px 0;
-        letter-spacing: 0.04em;
-    }
+.stApp { background: #101820; }
+.block-container { padding-top: 0.45rem; padding-left: 0.75rem; padding-right: 0.75rem; padding-bottom: 2rem; max-width: 900px; }
+header[data-testid="stHeader"] { background: rgba(16,24,32,0.92); }
+#MainMenu, footer { visibility: hidden; }
+h1 { font-size: 1.65rem !important; line-height: 1.85rem !important; font-weight: 900 !important; color: #f5f7fa !important; margin-bottom: 0.1rem !important; letter-spacing: -0.04em; }
+div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 0.82rem; }
+.summary-card { border-radius: 20px; border: 1px solid rgba(255,255,255,0.18); background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08)); padding: 14px; margin-bottom: 12px; box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
+.summary-card-positive { border-left: 7px solid #00e676; background: linear-gradient(120deg, rgba(0,200,83,0.26), rgba(255,255,255,0.08)); }
+.summary-card-negative { border-left: 7px solid #ff5252; background: linear-gradient(120deg, rgba(255,82,82,0.26), rgba(255,255,255,0.08)); }
+.summary-card-flat { border-left: 7px solid #b0bec5; }
+.summary-label { color: #d6e2ea; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; margin-bottom: 3px; }
+.summary-value { color: white; font-size: 2rem; font-weight: 900; line-height: 2.15rem; }
+.summary-pnl-positive { color: #00e676; font-weight: 900; font-size: 1.25rem; margin-top: 5px; }
+.summary-pnl-negative { color: #ff5252; font-weight: 900; font-size: 1.25rem; margin-top: 5px; }
+.summary-pnl-flat { color: #cfd8dc; font-weight: 900; font-size: 1.25rem; margin-top: 5px; }
+.bot-row { border-radius: 18px; border: 1px solid rgba(255,255,255,0.16); padding: 12px 13px; margin-bottom: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); }
+.bot-row-positive { background: linear-gradient(90deg, rgba(0,200,83,0.32), rgba(0,200,83,0.10)); border-left: 7px solid #00e676; }
+.bot-row-negative { background: linear-gradient(90deg, rgba(255,82,82,0.32), rgba(255,82,82,0.10)); border-left: 7px solid #ff5252; }
+.bot-row-flat { background: linear-gradient(90deg, rgba(96,125,139,0.30), rgba(96,125,139,0.10)); border-left: 7px solid #b0bec5; }
+.bot-topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.bot-name { color: white; font-size: 0.95rem; font-weight: 900; line-height: 1.15rem; }
+.bot-pnl-positive { color: #00e676; font-size: 1.28rem; font-weight: 900; white-space: nowrap; }
+.bot-pnl-negative { color: #ff5252; font-size: 1.28rem; font-weight: 900; white-space: nowrap; }
+.bot-pnl-flat { color: #cfd8dc; font-size: 1.28rem; font-weight: 900; white-space: nowrap; }
+.bot-subline { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: #d6e2ea; font-size: 0.76rem; font-weight: 700; }
+.tiny { color: #90a4ae; font-size: 0.68rem; margin-top: 5px; }
+.section-title { color: #f5f7fa; font-size: 0.9rem; font-weight: 900; text-transform: uppercase; margin: 16px 0 8px 0; letter-spacing: 0.04em; }
+.trade-card { border-radius: 14px; padding: 10px 11px; margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); }
+.trade-card-positive { border-left: 5px solid #00e676; background: rgba(0,230,118,0.10); }
+.trade-card-negative { border-left: 5px solid #ff5252; background: rgba(255,82,82,0.10); }
+.trade-card-flat { border-left: 5px solid #b0bec5; }
+.trade-top { display: flex; justify-content: space-between; gap: 8px; font-size: 0.84rem; font-weight: 900; color: white; }
+.trade-sub { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; font-size: 0.72rem; color: #d6e2ea; font-weight: 700; }
+.trade-pnl-positive { color: #00e676; }
+.trade-pnl-negative { color: #ff5252; }
+.trade-pnl-flat { color: #cfd8dc; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Quick overnight view: bot P&L, equity, positions, orders")
+st.caption("Current trading-session P&L. Tap a bot to see trades. Resets from next premarket.")
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 
 def get_spreadsheet_id():
     if "SPREADSHEET_ID" in st.secrets:
         return st.secrets["SPREADSHEET_ID"]
-
     if "gcp_service_account_extra" in st.secrets:
         extra = st.secrets["gcp_service_account_extra"]
         if "SPREADSHEET_ID" in extra:
             return extra["SPREADSHEET_ID"]
-
     st.error("Missing SPREADSHEET_ID in Streamlit Secrets.")
     st.stop()
 
 
 def get_credentials():
     if "gcp_service_account" in st.secrets:
-        service_account_info = dict(st.secrets["gcp_service_account"])
-        return Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-
+        return Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
     if os.path.exists("google_credentials.json"):
         return Credentials.from_service_account_file("google_credentials.json", scopes=SCOPES)
-
     st.error("No Google credentials found.")
     st.stop()
 
@@ -222,65 +85,79 @@ def load_sheet_data():
     creds = get_credentials()
     client = gspread.authorize(creds)
     spreadsheet = client.open_by_key(get_spreadsheet_id())
-
     snapshot_tabs = {}
     trade_tabs = {}
-
     for worksheet in spreadsheet.worksheets():
         rows = worksheet.get_all_records()
-
         if not rows:
             continue
-
         df = pd.DataFrame(rows)
-
         if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
             df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-        for col in [
-            "equity",
-            "buying_power",
-            "open_positions",
-            "open_orders",
-            "qty",
-            "buy_price",
-            "sell_price",
-            "pnl",
-            "pnl_pct",
-        ]:
+        for col in ["equity", "buying_power", "open_positions", "open_orders", "qty", "buy_price", "sell_price", "pnl", "pnl_pct"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-
         title = worksheet.title
-
         if title.endswith(" Trades"):
             trade_tabs[title.replace(" Trades", "")] = df
         else:
             if "equity" in df.columns:
                 df = df[df["equity"].fillna(0) > 0]
-
             snapshot_tabs[title] = df
-
     return snapshot_tabs, trade_tabs
 
 
-def calc_delta(df):
-    latest = float(df.iloc[-1].get("equity", 0) or 0)
+def to_et(ts):
+    if pd.isna(ts):
+        return ts
+    stamp = pd.Timestamp(ts)
+    if stamp.tzinfo is None:
+        stamp = stamp.tz_localize("UTC")
+    return stamp.tz_convert("America/New_York")
 
-    if len(df) > 1:
-        previous = float(df.iloc[-2].get("equity", latest) or latest)
-    else:
-        previous = latest
 
-    pnl = latest - previous
-    pct = 0.0 if previous == 0 else (pnl / previous) * 100
+def trading_session_date(ts):
+    et = to_et(ts)
+    if pd.isna(et):
+        return None
+    if et.hour < 4:
+        return (et - timedelta(days=1)).date()
+    return et.date()
 
-    return latest, pnl, pct
+
+def current_session_for_df(df):
+    if df.empty or "timestamp" not in df.columns:
+        return None
+    return trading_session_date(df.iloc[-1]["timestamp"])
+
+
+def session_slice(df, session_date):
+    if df is None or df.empty or "timestamp" not in df.columns or session_date is None:
+        return pd.DataFrame()
+    temp = df.copy()
+    temp["_session_date"] = temp["timestamp"].apply(trading_session_date)
+    return temp[temp["_session_date"] == session_date].drop(columns=["_session_date"], errors="ignore")
+
+
+def bot_session_stats(df):
+    session_date = current_session_for_df(df)
+    sdf = session_slice(df, session_date)
+    if sdf.empty:
+        sdf = df.copy()
+    latest = float(sdf.iloc[-1].get("equity", 0) or 0)
+    start = float(sdf.iloc[0].get("equity", latest) or latest)
+    pnl = latest - start
+    pct = 0.0 if start == 0 else (pnl / start) * 100
+    return latest, pnl, pct, session_date
 
 
 def money(value):
     return f"${float(value or 0):,.0f}"
+
+
+def money2(value):
+    return f"${float(value or 0):,.2f}"
 
 
 def pnl_class(pnl):
@@ -302,20 +179,15 @@ except Exception as e:
     st.stop()
 
 valid_rows = []
-
 for bot_name, df in data_by_tab.items():
     if df.empty:
         continue
-
     latest = df.iloc[-1]
-    equity, pnl, pct = calc_delta(df)
-
+    equity, pnl, pct, session_date = bot_session_stats(df)
     trades = trades_by_tab.get(bot_name)
-
-    trades_today = 0
-    if trades is not None and not trades.empty:
-        trades_today = len(trades)
-
+    session_trades = session_slice(trades, session_date) if trades is not None and not trades.empty else pd.DataFrame()
+    trade_count = len(session_trades)
+    trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
     valid_rows.append({
         "bot_name": bot_name,
         "equity": equity,
@@ -324,8 +196,11 @@ for bot_name, df in data_by_tab.items():
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": int(latest.get("open_positions", 0) or 0),
         "orders": int(latest.get("open_orders", 0) or 0),
-        "last_update": latest.get("timestamp", ""),
-        "trades": trades_today,
+        "last_update": to_et(latest.get("timestamp", "")),
+        "trades": trade_count,
+        "trade_pnl": trade_pnl,
+        "session_date": session_date,
+        "session_trades": session_trades,
     })
 
 if not valid_rows:
@@ -337,61 +212,43 @@ total_bp = sum(r["buying_power"] for r in valid_rows)
 total_pnl = sum(r["pnl"] for r in valid_rows)
 total_positions = sum(r["positions"] for r in valid_rows)
 total_orders = sum(r["orders"] for r in valid_rows)
-
 cls = pnl_class(total_pnl)
+session_dates = sorted({r["session_date"] for r in valid_rows if r["session_date"] is not None})
+session_label = session_dates[-1] if session_dates else "Current"
 
-render_html(
-    f'<div class="summary-card">'
-    f'<div class="summary-label">Total Equity</div>'
-    f'<div class="summary-value">{money(total_equity)}</div>'
-    f'<div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div>'
-    f'</div>'
-)
+render_html(f'<div class="summary-card summary-card-{cls}"><div class="summary-label">Total Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div><div class="tiny">Session: {session_label} ET. Resets next premarket.</div></div>')
 
 s1, s2 = st.columns(2)
-
 with s1:
-    render_html(
-        f'<div class="summary-card">'
-        f'<div class="summary-label">Buying Power</div>'
-        f'<div class="summary-value" style="font-size:1.35rem;">{money(total_bp)}</div>'
-        f'</div>'
-    )
-
+    render_html(f'<div class="summary-card"><div class="summary-label">Buying Power</div><div class="summary-value" style="font-size:1.35rem;">{money(total_bp)}</div></div>')
 with s2:
-    render_html(
-        f'<div class="summary-card">'
-        f'<div class="summary-label">Open Risk</div>'
-        f'<div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div>'
-        f'</div>'
-    )
+    render_html(f'<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>')
 
 render_html('<div class="section-title">Bots</div>')
-
 valid_rows.sort(key=lambda r: (r["pnl"] >= 0, abs(r["pnl"])), reverse=False)
 
 for row in valid_rows:
     cls = pnl_class(row["pnl"])
-
-    html = (
-        f'<div class="bot-row bot-row-{cls}">'
-        f'<div class="bot-topline">'
-        f'<div class="bot-name">{row["bot_name"]}</div>'
-        f'<div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>'
-        f'</div>'
-        f'<div class="bot-subline">'
-        f'<span>Equity {money(row["equity"])}</span>'
-        f'<span>{row["pct"]:+.2f}%</span>'
-        f'</div>'
-        f'<div class="bot-subline">'
-        f'<span>Pos {row["positions"]}</span>'
-        f'<span>Orders {row["orders"]}</span>'
-        f'<span>Trades {row["trades"]}</span>'
-        f'</div>'
-        f'<div class="tiny">Last: {row["last_update"]}</div>'
-        f'</div>'
-    )
-
+    html = (f'<div class="bot-row bot-row-{cls}"><div class="bot-topline"><div class="bot-name">{row["bot_name"]}</div><div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div></div><div class="bot-subline"><span>Equity {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div><div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div><div class="tiny">Last: {row["last_update"]}</div></div>')
     render_html(html)
+    with st.expander(f'Tap for trades - {row["bot_name"]}', expanded=False):
+        trades = row["session_trades"]
+        if trades is None or trades.empty:
+            st.caption("No trades logged for this session yet.")
+        else:
+            show = trades.tail(20).sort_values("timestamp", ascending=False)
+            for _, trade in show.iterrows():
+                trade_pnl = float(trade.get("pnl", 0) or 0)
+                trade_pct = float(trade.get("pnl_pct", 0) or 0)
+                trade_cls = pnl_class(trade_pnl)
+                symbol = trade.get("symbol", "")
+                side = str(trade.get("side", "")).upper()
+                qty = trade.get("qty", "")
+                buy_price = trade.get("buy_price", 0)
+                sell_price = trade.get("sell_price", 0)
+                status = trade.get("status", "")
+                timestamp = to_et(trade.get("timestamp", ""))
+                trade_html = (f'<div class="trade-card trade-card-{trade_cls}"><div class="trade-top"><span>{symbol} {side}</span><span class="trade-pnl-{trade_cls}">{trade_pnl:+,.2f}</span></div><div class="trade-sub"><span>Qty {qty}</span><span>{trade_pct:+.2f}%</span></div><div class="trade-sub"><span>Buy {money2(buy_price)}</span><span>Sell {money2(sell_price)}</span></div><div class="tiny">{status} | {timestamp}</div></div>')
+                render_html(trade_html)
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
