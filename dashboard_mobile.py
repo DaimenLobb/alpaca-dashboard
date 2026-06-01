@@ -265,17 +265,14 @@ for bot_name, df in data_by_tab.items():
     session_trades = session_slice(trades, session_date) if trades is not None and not trades.empty else pd.DataFrame()
     trade_count = len(session_trades)
     trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
-    # Use realized trade P&L for the card if trades exist.
-    # Equity P&L can include deposits, broker adjustments, stale snapshots, or unrealized moves.
-    display_pnl = trade_pnl if trade_count > 0 else pnl
-    display_pct = 0.0 if equity == 0 else (display_pnl / max(equity - display_pnl, 1)) * 100
-
+    # Main card P&L uses equity change, matching Alpaca-style daily account movement.
+    # Trades underneath are still shown for audit/details.
     valid_rows.append({
         "bot_name": bot_name,
         "equity": equity,
-        "pnl": display_pnl,
+        "pnl": pnl,
         "equity_pnl": pnl,
-        "pct": display_pct,
+        "pct": pct,
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": int(latest.get("open_positions", 0) or 0),
         "orders": int(latest.get("open_orders", 0) or 0),
@@ -299,7 +296,7 @@ cls = pnl_class(total_pnl)
 session_dates = sorted({r["session_date"] for r in valid_rows if r["session_date"] is not None})
 session_label = session_dates[-1] if session_dates else "Current"
 
-render_html(f'<div class="summary-card summary-card-{cls}"><div class="summary-label">Total Equity / Realized P&L</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div><div class="tiny">Session: {session_label} ET. Resets next premarket.</div></div>')
+render_html(f'<div class="summary-card summary-card-{cls}"><div class="summary-label">Total Equity / Equity Change</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div><div class="tiny">Session: {session_label} ET. Resets next premarket.</div></div>')
 
 s1, s2 = st.columns(2)
 with s1:
