@@ -380,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Overnight shows trade P&L. Overall shows account equity change.")
+st.caption("Overnight shows trade P&L. Overall shows total change since reset.")
 
 
 # ============================================================
@@ -543,9 +543,7 @@ def pnl_class(pnl):
         return "flat"
     if pnl > 0:
         return "positive"
-    if pnl < 0:
-        return "negative"
-    return "flat"
+    return "negative"
 
 
 def render_html(html):
@@ -648,52 +646,40 @@ def sort_rows(rows):
 def first_valid_number(df, col):
     if df is None or df.empty or col not in df.columns:
         return 0.0
-    series = pd.to_numeric(df[col], errors="coerce").dropna()
-    series = series[series > 0]
-    if series.empty:
-        return 0.0
-    return float(series.iloc[0])
+    values = pd.to_numeric(df[col], errors="coerce").dropna()
+    values = values[values > 0]
+    return float(values.iloc[0]) if not values.empty else 0.0
 
 
 def latest_valid_number(df, col):
     if df is None or df.empty or col not in df.columns:
         return 0.0
-    series = pd.to_numeric(df[col], errors="coerce").dropna()
-    series = series[series > 0]
-    if series.empty:
-        return 0.0
-    return float(series.iloc[-1])
+    values = pd.to_numeric(df[col], errors="coerce").dropna()
+    values = values[values > 0]
+    return float(values.iloc[-1]) if not values.empty else 0.0
 
 
 def overnight_change_for_df(df, col):
     if df is None or df.empty or "timestamp" not in df.columns or col not in df.columns:
         return 0.0
-
     session_date = current_session_for_df(df)
     sdf = session_slice(df, session_date)
-
     if sdf.empty:
         return 0.0
-
     values = pd.to_numeric(sdf[col], errors="coerce").dropna()
     values = values[values > 0]
-
     if values.empty:
         return 0.0
-
     return float(values.iloc[-1] - values.iloc[0])
 
 
-def group_other_overall_change(rows, field):
-    return sum(float(r.get(field, 0) or 0) for r in rows)
-
-
 def metric_class(value):
+    value = float(value or 0)
+    if abs(value) < 0.5:
+        return "flat"
     if value > 0:
         return "positive"
-    if value < 0:
-        return "negative"
-    return "flat"
+    return "negative"
 
 
 
@@ -723,28 +709,35 @@ for bot_name, df in data_by_tab.items():
         allocated_start = top3_allocated_start_equity(bot_name) or 0.0
         allocated_bp = top3_allocated_buying_power(bot_name)
 
-        top3_all_trades = pd.DataFrame()
-        top3_overnight_trades = pd.DataFrame()
+        all_reset_trades = pd.DataFrame()
+        overnight_trades = pd.DataFrame()
 
         if trades is not None and not trades.empty:
-            top3_all_trades = dedupe_trades_df(since_top3_reset(trades))
-            top3_overnight_trades = dedupe_trades_df(session_slice(trades, session_date))
+            all_reset_trades = dedupe_trades_df(since_top3_reset(trades))
+            if session_date is not None:
+                overnight_trades = dedupe_trades_df(since_top3_reset(session_slice(trades, session_date)))
 
-        session_trades = top3_all_trades
-
-        trade_pnl = 0.0
-        if top3_all_trades is not None and not top3_all_trades.empty and "pnl" in top3_all_trades.columns:
-            trade_pnl = float(top3_all_trades["pnl"].fillna(0).sum())
+        overall_trade_pnl = 0.0
+        if all_reset_trades is not None and not all_reset_trades.empty and "pnl" in all_reset_trades.columns:
+            overall_trade_pnl = float(all_reset_trades["pnl"].fillna(0).sum())
 
         overnight_trade_pnl = 0.0
-        if top3_overnight_trades is not None and not top3_overnight_trades.empty and "pnl" in top3_overnight_trades.columns:
-            overnight_trade_pnl = float(top3_overnight_trades["pnl"].fillna(0).sum())
+        if overnight_trades is not None and not overnight_trades.empty and "pnl" in overnight_trades.columns:
+            overnight_trade_pnl = float(overnight_trades["pnl"].fillna(0).sum())
 
-        display_equity = allocated_start + trade_pnl
+        session_trades = all_reset_trades
+        trade_pnl = overall_trade_pnl
+        trade_count = len(all_reset_trades) if all_reset_trades is not None else 0
+
+        display_equity = allocated_start + overall_trade_pnl
         display_pnl = overnight_trade_pnl
         display_pct = 0.0 if allocated_start == 0 else (overnight_trade_pnl / allocated_start) * 100
-        display_bp = allocated_bp + (trade_pnl * 2)
-        trade_count = len(top3_all_trades) if top3_all_trades is not None else 0
+        display_bp = allocated_bp + (overall_trade_pnl * 2)
+
+        equity_overnight = overnight_trade_pnl
+        equity_overall = overall_trade_pnl
+        bp_overnight = overnight_trade_pnl * 2
+        bp_overall = overall_trade_pnl * 2
 
     else:
         display_equity = raw_equity
@@ -758,27 +751,16 @@ for bot_name, df in data_by_tab.items():
         if session_trades is not None and not session_trades.empty and "pnl" in session_trades.columns:
             trade_pnl = float(session_trades["pnl"].fillna(0).sum())
 
-        # Overnight P&L is trade-based.
-        # No trades = grey +0, so tiny paper-account drift is ignored.
         display_pnl = trade_pnl if trade_count > 0 else 0.0
         display_pct = 0.0 if trade_count == 0 or raw_equity == 0 else (display_pnl / max(raw_equity - display_pnl, 1)) * 100
 
-    if is_top_account_bot(bot_name):
-        bp_overnight = display_pnl * 2
-        bp_overall = display_bp - top3_allocated_buying_power(bot_name)
-        equity_overnight = display_pnl
-        equity_overall = display_equity - (top3_allocated_start_equity(bot_name) or 0.0)
-    else:
         first_equity = first_valid_number(df, "equity")
         first_bp = first_valid_number(df, "buying_power")
         latest_bp = latest_valid_number(df, "buying_power")
 
-        # Overnight = trade P&L. No trades = +0.
-        equity_overnight = display_pnl if trade_count > 0 else 0.0
-        bp_overnight = equity_overnight * 2
-
-        # Overall = true account change from first logged baseline.
+        equity_overnight = display_pnl
         equity_overall = raw_equity - first_equity if first_equity else 0.0
+        bp_overnight = display_pnl * 2
         bp_overall = latest_bp - first_bp if first_bp else 0.0
 
     valid_rows.append({
@@ -812,7 +794,7 @@ session_label = session_dates[-1] if session_dates else "Current"
 render_html(
     f'<div class="summary-card summary-card-flat">'
     f'<div class="summary-label">Split Dashboard</div>'
-    f'<div class="summary-value" style="font-size:1.25rem;">Top 3 Account / Other Bots</div>'
+    f'<div class="summary-value" style="font-size:1.25rem;">Overnight / Overall</div>'
     f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $50k equity / $100k buying power.</div>'
     f'</div>'
 )
@@ -944,3 +926,4 @@ render_group(
 )
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
+
