@@ -294,6 +294,96 @@ st.markdown("""
         color: #00e676 !important;
         fill: #00e676 !important;
     }
+
+    .hero-card {
+        border-radius: 24px;
+        border: 1px solid rgba(255,255,255,0.20);
+        padding: 18px 16px;
+        margin-bottom: 14px;
+        box-shadow: 0 14px 34px rgba(0,0,0,0.38);
+    }
+
+    .hero-card-positive {
+        border-left: 9px solid #00e676;
+        background: linear-gradient(125deg, rgba(0,200,83,0.30), rgba(255,255,255,0.08));
+    }
+
+    .hero-card-negative {
+        border-left: 9px solid #ff5252;
+        background: linear-gradient(125deg, rgba(255,82,82,0.30), rgba(255,255,255,0.08));
+    }
+
+    .hero-card-flat {
+        border-left: 9px solid #b0bec5;
+        background: linear-gradient(125deg, rgba(96,125,139,0.24), rgba(255,255,255,0.08));
+    }
+
+    .hero-label {
+        color: #d6e2ea;
+        font-size: 0.78rem;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 5px;
+    }
+
+    .hero-value {
+        color: #ffffff;
+        font-size: 2.35rem;
+        font-weight: 950;
+        line-height: 2.55rem;
+        letter-spacing: -0.055em;
+    }
+
+    .hero-pnl-positive {
+        color: #00e676;
+        font-size: 1.45rem;
+        font-weight: 950;
+        margin-top: 8px;
+    }
+
+    .hero-pnl-negative {
+        color: #ff5252;
+        font-size: 1.45rem;
+        font-weight: 950;
+        margin-top: 8px;
+    }
+
+    .hero-pnl-flat {
+        color: #cfd8dc;
+        font-size: 1.45rem;
+        font-weight: 950;
+        margin-top: 8px;
+    }
+
+    .hero-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .hero-stat {
+        border-radius: 14px;
+        background: rgba(255,255,255,0.09);
+        border: 1px solid rgba(255,255,255,0.11);
+        padding: 9px 10px;
+    }
+
+    .hero-stat-label {
+        color: #aebbc4;
+        font-size: 0.64rem;
+        font-weight: 900;
+        text-transform: uppercase;
+    }
+
+    .hero-stat-value {
+        color: #ffffff;
+        font-size: 0.95rem;
+        font-weight: 950;
+        margin-top: 2px;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -637,11 +727,48 @@ if not valid_rows:
 session_dates = sorted({r["session_date"] for r in valid_rows if r["session_date"] is not None})
 session_label = session_dates[-1] if session_dates else "Current"
 
+top_rows_preview = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
+other_rows_preview = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
+
+top_equity = sum(r["equity"] for r in top_rows_preview)
+top_pnl = sum(r["pnl"] for r in top_rows_preview)
+top_bp = sum(r["buying_power"] for r in top_rows_preview)
+top_positions = sum(r["positions"] for r in top_rows_preview)
+top_orders = sum(r["orders"] for r in top_rows_preview)
+top_trades = sum(r["trades"] for r in top_rows_preview)
+
+other_equity = sum(r["equity"] for r in other_rows_preview)
+other_pnl = sum(r["pnl"] for r in other_rows_preview)
+other_bp = sum(r["buying_power"] for r in other_rows_preview)
+
+overall_equity = top_equity + other_equity
+overall_pnl = top_pnl + other_pnl
+overall_bp = top_bp + other_bp
+
+hero_cls = pnl_class(top_pnl)
+overall_cls = pnl_class(overall_pnl)
+
 render_html(
-    f'<div class="summary-card summary-card-flat">'
-    f'<div class="summary-label">Split Dashboard</div>'
-    f'<div class="summary-value" style="font-size:1.35rem;">Top 3 Account + Other Bots</div>'
-    f'<div class="tiny">Session: {session_label} ET. Top 3 reset: {TOP3_RESET_ET.strftime("%Y-%m-%d %H:%M ET")}.</div>'
+    f'<div class="hero-card hero-card-{hero_cls}">'
+    f'<div class="hero-label">Top 3 Shared Account Equity</div>'
+    f'<div class="hero-value">{money(top_equity)}</div>'
+    f'<div class="hero-pnl-{hero_cls}">{top_pnl:+,.0f} overnight</div>'
+    f'<div class="hero-grid">'
+    f'<div class="hero-stat"><div class="hero-stat-label">Buying Power</div><div class="hero-stat-value">{money(top_bp)}</div></div>'
+    f'<div class="hero-stat"><div class="hero-stat-label">Open Risk</div><div class="hero-stat-value">{top_positions} pos / {top_orders} ord</div></div>'
+    f'<div class="hero-stat"><div class="hero-stat-label">Trades</div><div class="hero-stat-value">{top_trades}</div></div>'
+    f'<div class="hero-stat"><div class="hero-stat-label">Session</div><div class="hero-stat-value">{session_label} ET</div></div>'
+    f'</div>'
+    f'<div class="tiny">Zeroed from allocation reset: Structure 45%, Metals 45%, Quality 10%.</div>'
+    f'</div>'
+)
+
+render_html(
+    f'<div class="summary-card summary-card-{overall_cls}">'
+    f'<div class="summary-label">Overall Total Equity / Equity Change</div>'
+    f'<div class="summary-value">{money(overall_equity)}</div>'
+    f'<div class="hero-pnl-{overall_cls}" style="font-size:1.05rem;">{overall_pnl:+,.0f} overall</div>'
+    f'<div class="tiny">Other bots: {money(other_equity)} equity / {other_pnl:+,.0f} change. Overall BP: {money(overall_bp)}.</div>'
     f'</div>'
 )
 
