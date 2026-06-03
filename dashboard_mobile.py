@@ -380,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Top 3 shared account vs other bots. Equity and buying power overnight + overall.")
+st.caption("Top 3 shared account vs other bots. Top 3 reset from 2026-06-03 03:19:00 ET.")
 
 
 # ============================================================
@@ -564,7 +564,7 @@ TOP3_ALLOCATIONS = {
 
 # Change this if you want the top 3 reset time moved.
 # Rows/trades before this ET time are ignored for the top 3 shared account.
-TOP3_RESET_ET = pd.Timestamp("2026-06-02 19:50:00", tz="America/New_York")
+TOP3_RESET_ET = pd.Timestamp("2026-06-03 03:19:00", tz="America/New_York")
 
 
 def top3_bucket(bot_name):
@@ -725,7 +725,7 @@ for bot_name, df in data_by_tab.items():
 
         if trades is not None and not trades.empty:
             top3_all_trades = dedupe_trades_df(since_top3_reset(trades))
-            top3_overnight_trades = dedupe_trades_df(session_slice(trades, session_date))
+            top3_overnight_trades = dedupe_trades_df(since_top3_reset(session_slice(trades, session_date)))
 
         session_trades = top3_all_trades
 
@@ -737,6 +737,9 @@ for bot_name, df in data_by_tab.items():
         if top3_overnight_trades is not None and not top3_overnight_trades.empty and "pnl" in top3_overnight_trades.columns:
             overnight_trade_pnl = float(top3_overnight_trades["pnl"].fillna(0).sum())
 
+        # Fully zeroed from reset:
+        # card P&L = overnight trades after reset only
+        # card equity = allocation + overall trades after reset only
         display_equity = allocated_start + trade_pnl
         display_pnl = overnight_trade_pnl
         display_pct = 0.0 if allocated_start == 0 else (overnight_trade_pnl / allocated_start) * 100
@@ -762,6 +765,16 @@ for bot_name, df in data_by_tab.items():
         bp_overall = display_bp - top3_allocated_buying_power(bot_name)
         equity_overnight = display_pnl
         equity_overall = display_equity - (top3_allocated_start_equity(bot_name) or 0.0)
+
+        # Absolute safety: no post-reset trades means the bot card is flat/zero.
+        if trade_count == 0:
+            display_pnl = 0.0
+            equity_overnight = 0.0
+            equity_overall = 0.0
+            bp_overnight = 0.0
+            bp_overall = 0.0
+            display_equity = top3_allocated_start_equity(bot_name) or display_equity
+            display_bp = top3_allocated_buying_power(bot_name)
     else:
         first_equity = first_valid_number(df, "equity")
         first_bp = first_valid_number(df, "buying_power")
@@ -803,7 +816,7 @@ render_html(
     f'<div class="summary-card summary-card-flat">'
     f'<div class="summary-label">Split Dashboard</div>'
     f'<div class="summary-value" style="font-size:1.25rem;">Top 3 Account / Other Bots</div>'
-    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $50k equity / $100k buying power.</div>'
+    f'<div class="tiny">Session: {session_label} ET. Top 3 reset: 2026-06-03 03:19:00 ET. Baseline: $50k equity / $100k BP.</div>'
     f'</div>'
 )
 
@@ -934,4 +947,3 @@ render_group(
 )
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
-
