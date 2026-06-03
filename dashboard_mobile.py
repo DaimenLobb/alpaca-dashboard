@@ -182,7 +182,7 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Current trading-session P&L. Tap a bot to see trades. Resets from next premarket.")
+st.caption("Split view: Top 3 shared account first, then other bots. Equity change from clean baseline.")
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
@@ -348,6 +348,86 @@ def dedupe_trades_df(df):
     return temp
 
 
+
+# ============================================================
+# BOT GROUPING / TRADE DEDUPE / ALLOCATION BASELINES
+# ============================================================
+
+TOP3_SHARED_ACCOUNT_EQUITY = 50000.0
+TOP3_SHARED_ACCOUNT_BUYING_POWER = 100000.0
+
+TOP3_ALLOCATIONS = {
+    "STRUCTURE": 0.45,
+    "METALS": 0.45,
+    "QUALITY": 0.10,
+}
+
+
+def top3_bucket(bot_name):
+    name = str(bot_name or "").upper()
+
+    if "STRUCTURE" in name:
+        return "STRUCTURE"
+
+    if "METALS ORB" in name or "METALS" in name:
+        return "METALS"
+
+    if (
+        "QUALITY HUNTER" in name
+        or "QUALITY SIZER" in name
+        or "QUILITY HUNTER" in name
+        or "QUILITY" in name
+    ):
+        return "QUALITY"
+
+    return None
+
+
+def is_top_account_bot(bot_name):
+    return top3_bucket(bot_name) is not None
+
+
+def top3_allocated_start_equity(bot_name):
+    bucket = top3_bucket(bot_name)
+    if bucket is None:
+        return None
+    return TOP3_SHARED_ACCOUNT_EQUITY * TOP3_ALLOCATIONS[bucket]
+
+
+def top3_allocated_buying_power(bot_name):
+    bucket = top3_bucket(bot_name)
+    if bucket is None:
+        return 0.0
+    return TOP3_SHARED_ACCOUNT_BUYING_POWER * TOP3_ALLOCATIONS[bucket]
+
+
+def sort_rows(rows):
+    return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
+
+
+def dedupe_trades_df(df):
+    if df is None or df.empty:
+        return df
+
+    temp = df.copy()
+
+    if "trade_id" in temp.columns:
+        temp["_trade_id_str"] = temp["trade_id"].astype(str)
+        has_id = temp["_trade_id_str"].str.len() > 0
+        with_id = temp[has_id].drop_duplicates(subset=["_trade_id_str"], keep="last")
+        without_id = temp[~has_id]
+        temp = pd.concat([with_id, without_id], ignore_index=True).drop(columns=["_trade_id_str"], errors="ignore")
+
+    key_cols = [c for c in ["timestamp", "symbol", "side", "qty", "buy_price", "sell_price", "pnl"] if c in temp.columns]
+    if key_cols:
+        temp = temp.drop_duplicates(subset=key_cols, keep="last")
+
+    if "timestamp" in temp.columns:
+        temp = temp.sort_values("timestamp")
+
+    return temp
+
+
 try:
     data_by_tab, trades_by_tab = load_sheet_data()
 except Exception as e:
@@ -366,13 +446,25 @@ for bot_name, df in data_by_tab.items():
     trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
     # Main card P&L uses equity change, matching Alpaca-style daily account movement.
     # Trades underneath are still shown for audit/details.
+    allocated_start = top3_allocated_start_equity(bot_name)
+
+    if allocated_start is not None:
+        display_equity = allocated_start + pnl
+        display_bp = top3_allocated_buying_power(bot_name)
+        display_pct = 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100
+    else:
+        display_equity = equity
+        display_bp = float(latest.get("buying_power", 0) or 0)
+        display_pct = pct
+
     valid_rows.append({
         "bot_name": bot_name,
-        "equity": equity,
+        "equity": display_equity,
+        "raw_equity": equity,
         "pnl": pnl,
         "equity_pnl": pnl,
-        "pct": pct,
-        "buying_power": float(latest.get("buying_power", 0) or 0),
+        "pct": display_pct,
+        "buying_power": display_bp,
         "positions": int(latest.get("open_positions", 0) or 0),
         "orders": int(latest.get("open_orders", 0) or 0),
         "last_update": to_et(latest.get("timestamp", "")),
@@ -386,22 +478,23 @@ if not valid_rows:
     st.warning("No valid bot rows found yet.")
     st.stop()
 
+
 total_equity = sum(r["equity"] for r in valid_rows)
 total_bp = sum(r["buying_power"] for r in valid_rows)
 total_pnl = sum(r["pnl"] for r in valid_rows)
 total_positions = sum(r["positions"] for r in valid_rows)
 total_orders = sum(r["orders"] for r in valid_rows)
-cls = pnl_class(total_pnl)
+
 session_dates = sorted({r["session_date"] for r in valid_rows if r["session_date"] is not None})
 session_label = session_dates[-1] if session_dates else "Current"
 
-render_html(f'<div class="summary-card summary-card-{cls}"><div class="summary-label">Total Equity / Equity Change</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div><div class="tiny">Session: {session_label} ET. Resets next premarket.</div></div>')
-
-s1, s2 = st.columns(2)
-with s1:
-    render_html(f'<div class="summary-card"><div class="summary-label">Buying Power</div><div class="summary-value" style="font-size:1.35rem;">{money(total_bp)}</div></div>')
-with s2:
-    render_html(f'<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>')
+render_html(
+    f'<div class="summary-card summary-card-{pnl_class(total_pnl)}">'
+    f'<div class="summary-label">Split Dashboard</div>'
+    f'<div class="summary-value" style="font-size:1.35rem;">Top 3 Account + Other Bots</div>'
+    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $50k equity / $100k buying power.</div>'
+    f'</div>'
+)
 
 def render_group(group_title, group_rows, subtitle):
     if not group_rows:
@@ -419,7 +512,7 @@ def render_group(group_title, group_rows, subtitle):
     render_html(f'<div class="group-subtitle">{subtitle}</div>')
     render_html(
         f'<div class="group-summary group-summary-{cls}">'
-        f'<div class="group-row"><span>Equity</span><span>{money(group_equity)}</span></div>'
+        f'<div class="group-row"><span>Total Equity</span><span>{money(group_equity)}</span></div>'
         f'<div class="group-row"><span>Equity Change</span><span>{group_pnl:+,.0f}</span></div>'
         f'<div class="group-row"><span>Buying Power</span><span>{money(group_bp)}</span></div>'
         f'<div class="group-row"><span>Risk</span><span>{group_positions} pos / {group_orders} ord / {group_trades} trades</span></div>'
@@ -446,7 +539,7 @@ def render_group(group_title, group_rows, subtitle):
             f'</div>'
             f'<div class="bot-subline">'
             f'<span>Trade P&L {row["trade_pnl"]:+,.0f}</span>'
-            f'<span>Equity change shown above</span>'
+            f'<span>Allocation adjusted</span>'
             f'</div>'
             f'<div class="tiny">Last: {row["last_update"]}</div>'
             f'</div>'
@@ -500,15 +593,15 @@ top_rows = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 
 render_group(
-    "Top 3 Shared Account",
+    "Top 3 Shared Trading Account",
     top_rows,
-    "Structure Hunter ORB, Metals ORB, Quality Hunter/Sizer — shown first.",
+    "Structure Hunter ORB 45%, Metals ORB 45%, Quality Hunter/Sizer 10%.",
 )
 
 render_group(
-    "Other Bots",
+    "Other Bot Accounts",
     other_rows,
-    "All remaining separate paper bot accounts.",
+    "Separate total for all remaining bot accounts.",
 )
 
 
