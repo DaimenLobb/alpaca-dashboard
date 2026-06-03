@@ -312,7 +312,7 @@ for bot_name, df in data_by_tab.items():
     latest = df.iloc[-1]
     equity, pnl, pct, session_date = bot_session_stats(df)
     trades = trades_by_tab.get(bot_name)
-    session_trades = dedupe_trades_df(session_slice(trades, session_date)) if trades is not None and not trades.empty else pd.DataFrame()
+    session_trades = session_slice(trades, session_date)
     trade_count = len(session_trades)
     trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
     # Main card P&L uses equity change, matching Alpaca-style daily account movement.
