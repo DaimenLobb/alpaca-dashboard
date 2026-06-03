@@ -231,6 +231,34 @@ st.markdown(
             color: white;
         }
 
+
+        .pnl-line {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+            font-size: 0.82rem;
+            font-weight: 900;
+        }
+
+        .pnl-label {
+            color: #aebbc4;
+            font-weight: 800;
+        }
+
+        .pnl-positive {
+            color: #00e676;
+        }
+
+        .pnl-negative {
+            color: #ff5252;
+        }
+
+        .pnl-flat {
+            color: #cfd8dc;
+        }
+
         .last-seen {
             color: #90a4ae;
             font-size: 0.68rem;
@@ -292,7 +320,7 @@ st.markdown(
 )
 
 st.title("Alpaca Bot Dashboard")
-st.caption("PC view: Top 3 shared account and other bot accounts, with overnight and overall P&L.")
+st.caption("PC view: current-session charts. Top 3 charts are allocation-adjusted.")
 
 
 # ============================================================
@@ -405,6 +433,20 @@ def session_slice(df, session_date):
     temp = df.copy()
     temp["_session_date"] = temp["timestamp"].apply(trading_session_date)
     return temp[temp["_session_date"] == session_date].drop(columns=["_session_date"], errors="ignore")
+
+
+def chart_session_df(df):
+    """Default PC chart to the current trading session."""
+    if df is None or df.empty:
+        return df
+
+    session_date = current_session_for_df(df)
+    sdf = session_slice(df, session_date)
+
+    if not sdf.empty:
+        return sdf
+
+    return df.tail(120)
 
 
 def bot_session_stats(df):
@@ -558,6 +600,67 @@ def dedupe_trades_df(df):
 
 def sort_rows(rows):
     return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
+
+
+def make_bot_chart_df(row):
+    """Build the bot card chart.
+
+    Top 3 bots use allocation-adjusted equity, not raw old account equity.
+    Other bots use only the current trading session.
+    """
+    bot_name = row["bot_name"]
+    df = row["df"]
+
+    if df is None or df.empty or "timestamp" not in df.columns:
+        return pd.DataFrame(columns=["timestamp", "equity"])
+
+    # Top 3 charts are synthetic/clean:
+    # allocation baseline + cumulative post-reset trade P&L.
+    if is_top_account_bot(bot_name):
+        allocated_start = top3_allocated_start_equity(bot_name) or 0.0
+        trades = row.get("session_trades")
+
+        if trades is None or trades.empty or "timestamp" not in trades.columns or "pnl" not in trades.columns:
+            ts = df["timestamp"].dropna()
+            if ts.empty:
+                now_ts = pd.Timestamp.now(tz="UTC")
+                return pd.DataFrame({"timestamp": [now_ts], "equity": [allocated_start]})
+
+            session_date = current_session_for_df(df)
+            sdf = session_slice(df, session_date)
+            if sdf.empty:
+                sdf = df.tail(2)
+
+            return pd.DataFrame({
+                "timestamp": sdf["timestamp"],
+                "equity": [allocated_start] * len(sdf),
+            })
+
+        clean_trades = dedupe_trades_df(trades).copy()
+        clean_trades = clean_trades.dropna(subset=["timestamp"]).sort_values("timestamp")
+        clean_trades["pnl"] = pd.to_numeric(clean_trades["pnl"], errors="coerce").fillna(0)
+        clean_trades["equity"] = allocated_start + clean_trades["pnl"].cumsum()
+
+        # Add a baseline point before first trade so line starts at allocation.
+        first_trade_time = clean_trades.iloc[0]["timestamp"]
+        base_row = pd.DataFrame({
+            "timestamp": [first_trade_time - pd.Timedelta(minutes=1)],
+            "equity": [allocated_start],
+        })
+
+        return pd.concat(
+            [base_row, clean_trades[["timestamp", "equity"]]],
+            ignore_index=True,
+        )
+
+    # Other bots: only show current trading session raw equity.
+    session_date = current_session_for_df(df)
+    sdf = session_slice(df, session_date)
+
+    if sdf.empty:
+        sdf = df.tail(120)
+
+    return sdf[["timestamp", "equity"]].copy()
 
 
 # ============================================================
@@ -844,13 +947,33 @@ def render_bot_card(row):
     st.metric(
         "Equity",
         money(row["equity"]),
-        f'{row["pnl"]:+,.0f} overnight / {row["equity_overall"]:+,.0f} overall',
-        delta_color=delta_color,
     )
 
-    if "equity" in df.columns and "timestamp" in df.columns:
-        chart_df = df.set_index("timestamp")[["equity"]].apply(pd.to_numeric, errors="coerce")
+    overnight_cls = pnl_class(row["pnl"])
+    overall_cls = pnl_class(row["equity_overall"])
+
+    st.markdown(
+        f"""
+        <div class="pnl-line">
+            <div><span class="pnl-label">Overnight</span> <span class="pnl-{overnight_cls}">{row["pnl"]:+,.0f}</span></div>
+            <div><span class="pnl-label">Overall</span> <span class="pnl-{overall_cls}">{row["equity_overall"]:+,.0f}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    chart_source = make_bot_chart_df(row)
+
+    if chart_source is not None and not chart_source.empty and "timestamp" in chart_source.columns:
+        chart_df = (
+            chart_source
+            .dropna(subset=["timestamp"])
+            .set_index("timestamp")[["equity"]]
+            .apply(pd.to_numeric, errors="coerce")
+        )
         st.line_chart(chart_df, height=125)
+    else:
+        st.caption("No session chart data yet.")
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -928,3 +1051,4 @@ render_bot_grid("Top 3 Shared Account Bots", top_rows)
 render_bot_grid("Other Bot Accounts", other_rows)
 
 st.caption("Responsive layout. Dashboard refreshes every 30 seconds.")
+
