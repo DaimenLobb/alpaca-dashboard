@@ -295,100 +295,92 @@ st.markdown("""
         fill: #00e676 !important;
     }
 
-    .hero-card {
+    .account-card {
         border-radius: 24px;
         border: 1px solid rgba(255,255,255,0.20);
-        padding: 18px 16px;
-        margin-bottom: 14px;
+        padding: 16px 15px;
+        margin: 14px 0 16px 0;
         box-shadow: 0 14px 34px rgba(0,0,0,0.38);
     }
 
-    .hero-card-positive {
+    .account-card-positive {
         border-left: 9px solid #00e676;
         background: linear-gradient(125deg, rgba(0,200,83,0.30), rgba(255,255,255,0.08));
     }
 
-    .hero-card-negative {
+    .account-card-negative {
         border-left: 9px solid #ff5252;
         background: linear-gradient(125deg, rgba(255,82,82,0.30), rgba(255,255,255,0.08));
     }
 
-    .hero-card-flat {
+    .account-card-flat {
         border-left: 9px solid #b0bec5;
         background: linear-gradient(125deg, rgba(96,125,139,0.24), rgba(255,255,255,0.08));
     }
 
-    .hero-label {
-        color: #d6e2ea;
-        font-size: 0.78rem;
-        font-weight: 900;
+    .account-title {
+        color: #ffffff;
+        font-size: 1.05rem;
+        font-weight: 950;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        margin-bottom: 5px;
+        margin-bottom: 9px;
     }
 
-    .hero-value {
+    .account-main-value {
         color: #ffffff;
         font-size: 2.35rem;
         font-weight: 950;
-        line-height: 2.55rem;
+        line-height: 2.5rem;
         letter-spacing: -0.055em;
+        margin-bottom: 8px;
     }
 
-    .hero-pnl-positive {
-        color: #00e676;
-        font-size: 1.45rem;
-        font-weight: 950;
-        margin-top: 8px;
-    }
-
-    .hero-pnl-negative {
-        color: #ff5252;
-        font-size: 1.45rem;
-        font-weight: 950;
-        margin-top: 8px;
-    }
-
-    .hero-pnl-flat {
-        color: #cfd8dc;
-        font-size: 1.45rem;
-        font-weight: 950;
-        margin-top: 8px;
-    }
-
-    .hero-grid {
+    .metric-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 8px;
-        margin-top: 12px;
+        margin-top: 10px;
     }
 
-    .hero-stat {
+    .metric-box {
         border-radius: 14px;
         background: rgba(255,255,255,0.09);
         border: 1px solid rgba(255,255,255,0.11);
         padding: 9px 10px;
     }
 
-    .hero-stat-label {
+    .metric-label {
         color: #aebbc4;
         font-size: 0.64rem;
         font-weight: 900;
         text-transform: uppercase;
     }
 
-    .hero-stat-value {
+    .metric-value {
         color: #ffffff;
-        font-size: 0.95rem;
+        font-size: 0.98rem;
         font-weight: 950;
         margin-top: 2px;
+    }
+
+    .metric-positive {
+        color: #00e676;
+    }
+
+    .metric-negative {
+        color: #ff5252;
+    }
+
+    .metric-flat {
+        color: #cfd8dc;
     }
 
 </style>
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Split view: Top 3 shared account first, then other bots. Top 3 is zeroed from allocation baseline.")
+st.caption("Top 3 shared account vs other bots. Equity and buying power overnight + overall.")
 
 
 # ============================================================
@@ -650,6 +642,58 @@ def sort_rows(rows):
     return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
 
 
+def first_valid_number(df, col):
+    if df is None or df.empty or col not in df.columns:
+        return 0.0
+    series = pd.to_numeric(df[col], errors="coerce").dropna()
+    series = series[series > 0]
+    if series.empty:
+        return 0.0
+    return float(series.iloc[0])
+
+
+def latest_valid_number(df, col):
+    if df is None or df.empty or col not in df.columns:
+        return 0.0
+    series = pd.to_numeric(df[col], errors="coerce").dropna()
+    series = series[series > 0]
+    if series.empty:
+        return 0.0
+    return float(series.iloc[-1])
+
+
+def overnight_change_for_df(df, col):
+    if df is None or df.empty or "timestamp" not in df.columns or col not in df.columns:
+        return 0.0
+
+    session_date = current_session_for_df(df)
+    sdf = session_slice(df, session_date)
+
+    if sdf.empty:
+        return 0.0
+
+    values = pd.to_numeric(sdf[col], errors="coerce").dropna()
+    values = values[values > 0]
+
+    if values.empty:
+        return 0.0
+
+    return float(values.iloc[-1] - values.iloc[0])
+
+
+def group_other_overall_change(rows, field):
+    return sum(float(r.get(field, 0) or 0) for r in rows)
+
+
+def metric_class(value):
+    if value > 0:
+        return "positive"
+    if value < 0:
+        return "negative"
+    return "flat"
+
+
+
 # ============================================================
 # LOAD
 # ============================================================
@@ -676,18 +720,28 @@ for bot_name, df in data_by_tab.items():
         allocated_start = top3_allocated_start_equity(bot_name) or 0.0
         allocated_bp = top3_allocated_buying_power(bot_name)
 
+        top3_all_trades = pd.DataFrame()
+        top3_overnight_trades = pd.DataFrame()
+
         if trades is not None and not trades.empty:
-            session_trades = dedupe_trades_df(since_top3_reset(trades))
+            top3_all_trades = dedupe_trades_df(since_top3_reset(trades))
+            top3_overnight_trades = dedupe_trades_df(session_slice(trades, session_date))
+
+        session_trades = top3_all_trades
 
         trade_pnl = 0.0
-        if session_trades is not None and not session_trades.empty and "pnl" in session_trades.columns:
-            trade_pnl = float(session_trades["pnl"].fillna(0).sum())
+        if top3_all_trades is not None and not top3_all_trades.empty and "pnl" in top3_all_trades.columns:
+            trade_pnl = float(top3_all_trades["pnl"].fillna(0).sum())
+
+        overnight_trade_pnl = 0.0
+        if top3_overnight_trades is not None and not top3_overnight_trades.empty and "pnl" in top3_overnight_trades.columns:
+            overnight_trade_pnl = float(top3_overnight_trades["pnl"].fillna(0).sum())
 
         display_equity = allocated_start + trade_pnl
-        display_pnl = trade_pnl
-        display_pct = 0.0 if allocated_start == 0 else (trade_pnl / allocated_start) * 100
-        display_bp = allocated_bp
-        trade_count = len(session_trades) if session_trades is not None else 0
+        display_pnl = overnight_trade_pnl
+        display_pct = 0.0 if allocated_start == 0 else (overnight_trade_pnl / allocated_start) * 100
+        display_bp = allocated_bp + (trade_pnl * 2)
+        trade_count = len(top3_all_trades) if top3_all_trades is not None else 0
 
     else:
         display_equity = raw_equity
@@ -703,12 +757,30 @@ for bot_name, df in data_by_tab.items():
         if session_trades is not None and not session_trades.empty and "pnl" in session_trades.columns:
             trade_pnl = float(session_trades["pnl"].fillna(0).sum())
 
+    if is_top_account_bot(bot_name):
+        bp_overnight = display_pnl * 2
+        bp_overall = display_bp - top3_allocated_buying_power(bot_name)
+        equity_overnight = display_pnl
+        equity_overall = display_equity - (top3_allocated_start_equity(bot_name) or 0.0)
+    else:
+        first_equity = first_valid_number(df, "equity")
+        first_bp = first_valid_number(df, "buying_power")
+        latest_bp = latest_valid_number(df, "buying_power")
+        bp_overnight = overnight_change_for_df(df, "buying_power")
+        bp_overall = latest_bp - first_bp if first_bp else 0.0
+        equity_overnight = equity_pnl
+        equity_overall = raw_equity - first_equity if first_equity else 0.0
+
     valid_rows.append({
         "bot_name": bot_name,
         "equity": display_equity,
         "raw_equity": raw_equity,
         "pnl": display_pnl,
         "equity_pnl": equity_pnl,
+        "equity_overnight": equity_overnight,
+        "equity_overall": equity_overall,
+        "bp_overnight": bp_overnight,
+        "bp_overall": bp_overall,
         "pct": display_pct,
         "buying_power": display_bp,
         "positions": int(latest.get("open_positions", 0) or 0),
@@ -727,48 +799,11 @@ if not valid_rows:
 session_dates = sorted({r["session_date"] for r in valid_rows if r["session_date"] is not None})
 session_label = session_dates[-1] if session_dates else "Current"
 
-top_rows_preview = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
-other_rows_preview = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
-
-top_equity = sum(r["equity"] for r in top_rows_preview)
-top_pnl = sum(r["pnl"] for r in top_rows_preview)
-top_bp = sum(r["buying_power"] for r in top_rows_preview)
-top_positions = sum(r["positions"] for r in top_rows_preview)
-top_orders = sum(r["orders"] for r in top_rows_preview)
-top_trades = sum(r["trades"] for r in top_rows_preview)
-
-other_equity = sum(r["equity"] for r in other_rows_preview)
-other_pnl = sum(r["pnl"] for r in other_rows_preview)
-other_bp = sum(r["buying_power"] for r in other_rows_preview)
-
-overall_equity = top_equity + other_equity
-overall_pnl = top_pnl + other_pnl
-overall_bp = top_bp + other_bp
-
-hero_cls = pnl_class(top_pnl)
-overall_cls = pnl_class(overall_pnl)
-
 render_html(
-    f'<div class="hero-card hero-card-{hero_cls}">'
-    f'<div class="hero-label">Top 3 Shared Account Equity</div>'
-    f'<div class="hero-value">{money(top_equity)}</div>'
-    f'<div class="hero-pnl-{hero_cls}">{top_pnl:+,.0f} overnight</div>'
-    f'<div class="hero-grid">'
-    f'<div class="hero-stat"><div class="hero-stat-label">Buying Power</div><div class="hero-stat-value">{money(top_bp)}</div></div>'
-    f'<div class="hero-stat"><div class="hero-stat-label">Open Risk</div><div class="hero-stat-value">{top_positions} pos / {top_orders} ord</div></div>'
-    f'<div class="hero-stat"><div class="hero-stat-label">Trades</div><div class="hero-stat-value">{top_trades}</div></div>'
-    f'<div class="hero-stat"><div class="hero-stat-label">Session</div><div class="hero-stat-value">{session_label} ET</div></div>'
-    f'</div>'
-    f'<div class="tiny">Zeroed from allocation reset: Structure 45%, Metals 45%, Quality 10%.</div>'
-    f'</div>'
-)
-
-render_html(
-    f'<div class="summary-card summary-card-{overall_cls}">'
-    f'<div class="summary-label">Overall Total Equity / Equity Change</div>'
-    f'<div class="summary-value">{money(overall_equity)}</div>'
-    f'<div class="hero-pnl-{overall_cls}" style="font-size:1.05rem;">{overall_pnl:+,.0f} overall</div>'
-    f'<div class="tiny">Other bots: {money(other_equity)} equity / {other_pnl:+,.0f} change. Overall BP: {money(overall_bp)}.</div>'
+    f'<div class="summary-card summary-card-flat">'
+    f'<div class="summary-label">Split Dashboard</div>'
+    f'<div class="summary-value" style="font-size:1.25rem;">Top 3 Account / Other Bots</div>'
+    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $50k equity / $100k buying power.</div>'
     f'</div>'
 )
 
@@ -782,21 +817,34 @@ def render_group(group_title, group_rows, subtitle):
         return
 
     group_equity = sum(r["equity"] for r in group_rows)
-    group_pnl = sum(r["pnl"] for r in group_rows)
+    group_equity_overnight = sum(r["equity_overnight"] for r in group_rows)
+    group_equity_overall = sum(r["equity_overall"] for r in group_rows)
     group_bp = sum(r["buying_power"] for r in group_rows)
+    group_bp_overnight = sum(r["bp_overnight"] for r in group_rows)
+    group_bp_overall = sum(r["bp_overall"] for r in group_rows)
     group_positions = sum(r["positions"] for r in group_rows)
     group_orders = sum(r["orders"] for r in group_rows)
     group_trades = sum(r["trades"] for r in group_rows)
-    cls = pnl_class(group_pnl)
+    cls = pnl_class(group_equity_overnight)
 
-    render_html(f'<div class="group-title">{group_title}</div>')
-    render_html(f'<div class="group-subtitle">{subtitle}</div>')
+    eq_overnight_cls = metric_class(group_equity_overnight)
+    eq_overall_cls = metric_class(group_equity_overall)
+    bp_overnight_cls = metric_class(group_bp_overnight)
+    bp_overall_cls = metric_class(group_bp_overall)
+
     render_html(
-        f'<div class="group-summary group-summary-{cls}">'
-        f'<div class="group-row"><span>Total Equity</span><span>{money(group_equity)}</span></div>'
-        f'<div class="group-row"><span>Equity Change</span><span>{group_pnl:+,.0f}</span></div>'
-        f'<div class="group-row"><span>Buying Power</span><span>{money(group_bp)}</span></div>'
-        f'<div class="group-row"><span>Risk</span><span>{group_positions} pos / {group_orders} ord / {group_trades} trades</span></div>'
+        f'<div class="account-card account-card-{cls}">'
+        f'<div class="account-title">{group_title}</div>'
+        f'<div class="account-main-value">{money(group_equity)}</div>'
+        f'<div class="metric-grid">'
+        f'<div class="metric-box"><div class="metric-label">Equity Overnight</div><div class="metric-value metric-{eq_overnight_cls}">{group_equity_overnight:+,.0f}</div></div>'
+        f'<div class="metric-box"><div class="metric-label">Equity Overall</div><div class="metric-value metric-{eq_overall_cls}">{group_equity_overall:+,.0f}</div></div>'
+        f'<div class="metric-box"><div class="metric-label">Buying Power</div><div class="metric-value">{money(group_bp)}</div></div>'
+        f'<div class="metric-box"><div class="metric-label">BP Overnight</div><div class="metric-value metric-{bp_overnight_cls}">{group_bp_overnight:+,.0f}</div></div>'
+        f'<div class="metric-box"><div class="metric-label">BP Overall</div><div class="metric-value metric-{bp_overall_cls}">{group_bp_overall:+,.0f}</div></div>'
+        f'<div class="metric-box"><div class="metric-label">Risk / Trades</div><div class="metric-value">{group_positions} pos / {group_orders} ord / {group_trades}</div></div>'
+        f'</div>'
+        f'<div class="tiny">{subtitle}</div>'
         f'</div>'
     )
 
@@ -820,7 +868,7 @@ def render_group(group_title, group_rows, subtitle):
             f'</div>'
             f'<div class="bot-subline">'
             f'<span>Trade P&L {row["trade_pnl"]:+,.0f}</span>'
-            f'<span>{"Top 3 allocation" if is_top_account_bot(row["bot_name"]) else "Equity change"}</span>'
+            f'<span>{"Top 3 overall trades" if is_top_account_bot(row["bot_name"]) else "Session trades"}</span>'
             f'</div>'
             f'<div class="tiny">Last: {row["last_update"]}</div>'
             f'</div>'
@@ -886,3 +934,4 @@ render_group(
 )
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
+
