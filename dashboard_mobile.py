@@ -128,6 +128,56 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
         padding-top: 0.25rem !important;
     }
 
+
+    .group-title {
+        color: #ffffff;
+        font-size: 1.02rem;
+        font-weight: 950;
+        text-transform: uppercase;
+        margin: 20px 0 9px 0;
+        letter-spacing: 0.045em;
+    }
+
+    .group-subtitle {
+        color: #aebbc4;
+        font-size: 0.72rem;
+        font-weight: 700;
+        margin-top: -5px;
+        margin-bottom: 10px;
+    }
+
+    .group-summary {
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.18);
+        padding: 12px 13px;
+        margin-bottom: 12px;
+        background: linear-gradient(120deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+    }
+
+    .group-summary-positive {
+        border-left: 7px solid #00e676;
+        background: linear-gradient(120deg, rgba(0,200,83,0.22), rgba(255,255,255,0.06));
+    }
+
+    .group-summary-negative {
+        border-left: 7px solid #ff5252;
+        background: linear-gradient(120deg, rgba(255,82,82,0.22), rgba(255,255,255,0.06));
+    }
+
+    .group-summary-flat {
+        border-left: 7px solid #b0bec5;
+    }
+
+    .group-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: #f5f7fa;
+        font-size: 0.86rem;
+        font-weight: 900;
+        margin-bottom: 5px;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -262,7 +312,7 @@ for bot_name, df in data_by_tab.items():
     latest = df.iloc[-1]
     equity, pnl, pct, session_date = bot_session_stats(df)
     trades = trades_by_tab.get(bot_name)
-    session_trades = session_slice(trades, session_date) if trades is not None and not trades.empty else pd.DataFrame()
+    session_trades = dedupe_trades_df(session_slice(trades, session_date)) if trades is not None and not trades.empty else pd.DataFrame()
     trade_count = len(session_trades)
     trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
     # Main card P&L uses equity change, matching Alpaca-style daily account movement.
@@ -304,31 +354,113 @@ with s1:
 with s2:
     render_html(f'<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>')
 
-render_html('<div class="section-title">Bots</div>')
-valid_rows.sort(key=lambda r: (r["pnl"] >= 0, abs(r["pnl"])), reverse=False)
+def render_group(group_title, group_rows, subtitle):
+    if not group_rows:
+        return
 
-for row in valid_rows:
-    cls = pnl_class(row["pnl"])
-    html = (f'<div class="bot-row bot-row-{cls}"><div class="bot-topline"><div class="bot-name">{row["bot_name"]}</div><div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div></div><div class="bot-subline"><span>Equity {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div><div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div><div class="tiny">Last: {row["last_update"]}</div></div>')
-    render_html(html)
-    with st.expander(f'📊 View trades ({row["trades"]})', expanded=False):
-        trades = row["session_trades"]
-        if trades is None or trades.empty:
-            st.caption("No trades logged for this session yet.")
-        else:
-            show = trades.tail(20).sort_values("timestamp", ascending=False)
-            for _, trade in show.iterrows():
-                trade_pnl = float(trade.get("pnl", 0) or 0)
-                trade_pct = float(trade.get("pnl_pct", 0) or 0)
-                trade_cls = pnl_class(trade_pnl)
-                symbol = trade.get("symbol", "")
-                side = str(trade.get("side", "")).upper()
-                qty = trade.get("qty", "")
-                buy_price = trade.get("buy_price", 0)
-                sell_price = trade.get("sell_price", 0)
-                status = trade.get("status", "")
-                timestamp = to_et(trade.get("timestamp", ""))
-                trade_html = (f'<div class="trade-card trade-card-{trade_cls}"><div class="trade-top"><span>{symbol} {side}</span><span class="trade-pnl-{trade_cls}">{trade_pnl:+,.2f}</span></div><div class="trade-sub"><span>Qty {qty}</span><span>{trade_pct:+.2f}%</span></div><div class="trade-sub"><span>Buy {money2(buy_price)}</span><span>Sell {money2(sell_price)}</span></div><div class="tiny">{status} | {timestamp}</div></div>')
-                render_html(trade_html)
+    group_equity = sum(r["equity"] for r in group_rows)
+    group_pnl = sum(r["pnl"] for r in group_rows)
+    group_bp = sum(r["buying_power"] for r in group_rows)
+    group_positions = sum(r["positions"] for r in group_rows)
+    group_orders = sum(r["orders"] for r in group_rows)
+    group_trades = sum(r["trades"] for r in group_rows)
+    cls = pnl_class(group_pnl)
+
+    render_html(f'<div class="group-title">{group_title}</div>')
+    render_html(f'<div class="group-subtitle">{subtitle}</div>')
+    render_html(
+        f'<div class="group-summary group-summary-{cls}">'
+        f'<div class="group-row"><span>Equity</span><span>{money(group_equity)}</span></div>'
+        f'<div class="group-row"><span>Equity Change</span><span>{group_pnl:+,.0f}</span></div>'
+        f'<div class="group-row"><span>Buying Power</span><span>{money(group_bp)}</span></div>'
+        f'<div class="group-row"><span>Risk</span><span>{group_positions} pos / {group_orders} ord / {group_trades} trades</span></div>'
+        f'</div>'
+    )
+
+    for row in sort_rows(group_rows):
+        cls = pnl_class(row["pnl"])
+
+        html = (
+            f'<div class="bot-row bot-row-{cls}">'
+            f'<div class="bot-topline">'
+            f'<div class="bot-name">{row["bot_name"]}</div>'
+            f'<div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>'
+            f'</div>'
+            f'<div class="bot-subline">'
+            f'<span>Equity {money(row["equity"])}</span>'
+            f'<span>{row["pct"]:+.2f}%</span>'
+            f'</div>'
+            f'<div class="bot-subline">'
+            f'<span>Pos {row["positions"]}</span>'
+            f'<span>Orders {row["orders"]}</span>'
+            f'<span>Trades {row["trades"]}</span>'
+            f'</div>'
+            f'<div class="bot-subline">'
+            f'<span>Trade P&L {row["trade_pnl"]:+,.0f}</span>'
+            f'<span>Equity change shown above</span>'
+            f'</div>'
+            f'<div class="tiny">Last: {row["last_update"]}</div>'
+            f'</div>'
+        )
+
+        render_html(html)
+
+        with st.expander(f'📊 View trades ({row["trades"]})', expanded=False):
+            trades = row["session_trades"]
+
+            if trades is None or trades.empty:
+                st.caption("No trades logged for this session yet.")
+            else:
+                show = dedupe_trades_df(trades).tail(20).sort_values("timestamp", ascending=False)
+
+                for _, trade in show.iterrows():
+                    trade_pnl = float(trade.get("pnl", 0) or 0)
+                    trade_pct = float(trade.get("pnl_pct", 0) or 0)
+                    trade_cls = pnl_class(trade_pnl)
+
+                    symbol = trade.get("symbol", "")
+                    side = str(trade.get("side", "")).upper()
+                    qty = trade.get("qty", "")
+                    buy_price = trade.get("buy_price", 0)
+                    sell_price = trade.get("sell_price", 0)
+                    status = trade.get("status", "")
+                    timestamp = to_et(trade.get("timestamp", ""))
+
+                    trade_html = (
+                        f'<div class="trade-card trade-card-{trade_cls}">'
+                        f'<div class="trade-top">'
+                        f'<span>{symbol} {side}</span>'
+                        f'<span class="trade-pnl-{trade_cls}">{trade_pnl:+,.2f}</span>'
+                        f'</div>'
+                        f'<div class="trade-sub">'
+                        f'<span>Qty {qty}</span>'
+                        f'<span>{trade_pct:+.2f}%</span>'
+                        f'</div>'
+                        f'<div class="trade-sub">'
+                        f'<span>Buy {money2(buy_price)}</span>'
+                        f'<span>Sell {money2(sell_price)}</span>'
+                        f'</div>'
+                        f'<div class="tiny">{status} | {timestamp}</div>'
+                        f'</div>'
+                    )
+
+                    render_html(trade_html)
+
+
+top_rows = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
+other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
+
+render_group(
+    "Top 3 Shared Account",
+    top_rows,
+    "Structure Hunter ORB, Metals ORB, Quality Hunter/Sizer — shown first.",
+)
+
+render_group(
+    "Other Bots",
+    other_rows,
+    "All remaining separate paper bot accounts.",
+)
+
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
