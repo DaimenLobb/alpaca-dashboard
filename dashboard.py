@@ -320,7 +320,7 @@ st.markdown(
 )
 
 st.title("Alpaca Bot Dashboard")
-st.caption("PC view: current-session charts. Top 3 charts are allocation-adjusted.")
+st.caption("PC view: actual shared-account summary, session charts, and overnight/overall P&L.")
 
 
 # ============================================================
@@ -519,6 +519,9 @@ def render_html(html):
 TOP3_SHARED_ACCOUNT_EQUITY = 50000.0
 TOP3_SHARED_ACCOUNT_BUYING_POWER = 100000.0
 
+# Ignore tiny paper-account drift, but show real equity moves even if trade rows missed.
+NO_TRADE_EQUITY_MOVE_THRESHOLD = 10.0
+
 TOP3_ALLOCATIONS = {
     "STRUCTURE": 0.45,
     "METALS": 0.45,
@@ -600,6 +603,63 @@ def dedupe_trades_df(df):
 
 def sort_rows(rows):
     return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
+
+
+def latest_row_by_time(rows):
+    if not rows:
+        return None
+
+    def key_func(row):
+        try:
+            return pd.Timestamp(row.get("last_update"))
+        except Exception:
+            return pd.Timestamp.min.tz_localize("UTC")
+
+    return max(rows, key=key_func)
+
+
+def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
+    """Use one actual account snapshot for shared accounts, not summed bot allocations."""
+    source = latest_row_by_time(rows)
+
+    if source is None:
+        return {
+            "equity": equity_baseline,
+            "equity_overnight": 0.0,
+            "equity_overall": 0.0,
+            "buying_power": bp_baseline,
+            "bp_overnight": 0.0,
+            "bp_overall": 0.0,
+            "positions": 0,
+            "orders": 0,
+            "trades": 0,
+        }
+
+    df = source.get("df")
+    raw_equity = float(source.get("raw_equity", 0) or 0)
+    raw_bp = latest_valid_number(df, "buying_power") if df is not None else 0.0
+
+    session_date = source.get("session_date")
+    sdf = session_slice(df, session_date) if df is not None and session_date is not None else pd.DataFrame()
+
+    if sdf is not None and not sdf.empty:
+        start_equity = float(sdf.iloc[0].get("equity", raw_equity) or raw_equity)
+        start_bp = float(sdf.iloc[0].get("buying_power", raw_bp) or raw_bp)
+    else:
+        start_equity = raw_equity
+        start_bp = raw_bp
+
+    return {
+        "equity": raw_equity if raw_equity else equity_baseline,
+        "equity_overnight": raw_equity - start_equity,
+        "equity_overall": (raw_equity - equity_baseline) if raw_equity else 0.0,
+        "buying_power": raw_bp if raw_bp else bp_baseline,
+        "bp_overnight": (raw_bp - start_bp) if raw_bp else 0.0,
+        "bp_overall": (raw_bp - bp_baseline) if raw_bp else 0.0,
+        "positions": sum(r["positions"] for r in rows),
+        "orders": sum(r["orders"] for r in rows),
+        "trades": sum(r["trades"] for r in rows),
+    }
 
 
 def make_bot_chart_df(row):
@@ -740,8 +800,15 @@ for bot_name, df in data_by_tab.items():
         if session_trades is not None and not session_trades.empty and "pnl" in session_trades.columns:
             trade_pnl = float(session_trades["pnl"].fillna(0).sum())
 
-        display_pnl = trade_pnl if trade_count > 0 else 0.0
-        display_pct = 0.0 if trade_count == 0 or raw_equity == 0 else (display_pnl / max(raw_equity - display_pnl, 1)) * 100
+        # Prefer logged trade P&L. If trade rows are missing but equity clearly moved, show equity movement.
+        if trade_count > 0:
+            display_pnl = trade_pnl
+        elif abs(equity_pnl) >= NO_TRADE_EQUITY_MOVE_THRESHOLD:
+            display_pnl = equity_pnl
+        else:
+            display_pnl = 0.0
+
+        display_pct = 0.0 if display_pnl == 0 or raw_equity == 0 else (display_pnl / max(raw_equity - display_pnl, 1)) * 100
 
         first_equity = first_valid_number(df, "equity")
         first_bp = first_valid_number(df, "buying_power")
@@ -786,19 +853,30 @@ session_label = session_dates[-1] if session_dates else "Current"
 # RENDER SUMMARIES
 # ============================================================
 
-def render_account_summary(group_title, group_rows, subtitle):
+def render_account_summary(group_title, group_rows, subtitle, override_summary=None):
     if not group_rows:
         return
 
-    group_equity = sum(r["equity"] for r in group_rows)
-    group_equity_overnight = sum(r["equity_overnight"] for r in group_rows)
-    group_equity_overall = sum(r["equity_overall"] for r in group_rows)
-    group_bp = sum(r["buying_power"] for r in group_rows)
-    group_bp_overnight = sum(r["bp_overnight"] for r in group_rows)
-    group_bp_overall = sum(r["bp_overall"] for r in group_rows)
-    group_positions = sum(r["positions"] for r in group_rows)
-    group_orders = sum(r["orders"] for r in group_rows)
-    group_trades = sum(r["trades"] for r in group_rows)
+    if override_summary is not None:
+        group_equity = override_summary["equity"]
+        group_equity_overnight = override_summary["equity_overnight"]
+        group_equity_overall = override_summary["equity_overall"]
+        group_bp = override_summary["buying_power"]
+        group_bp_overnight = override_summary["bp_overnight"]
+        group_bp_overall = override_summary["bp_overall"]
+        group_positions = override_summary["positions"]
+        group_orders = override_summary["orders"]
+        group_trades = override_summary["trades"]
+    else:
+        group_equity = sum(r["equity"] for r in group_rows)
+        group_equity_overnight = sum(r["equity_overnight"] for r in group_rows)
+        group_equity_overall = sum(r["equity_overall"] for r in group_rows)
+        group_bp = sum(r["buying_power"] for r in group_rows)
+        group_bp_overnight = sum(r["bp_overnight"] for r in group_rows)
+        group_bp_overall = sum(r["bp_overall"] for r in group_rows)
+        group_positions = sum(r["positions"] for r in group_rows)
+        group_orders = sum(r["orders"] for r in group_rows)
+        group_trades = sum(r["trades"] for r in group_rows)
 
     cls = pnl_class(group_equity_overnight)
     eq_overnight_cls = metric_class(group_equity_overnight)
@@ -833,10 +911,16 @@ render_html(
 summary_col1, summary_col2 = st.columns(2)
 
 with summary_col1:
+    top3_account_summary = account_equity_summary_from_rows(
+        top_rows,
+        TOP3_SHARED_ACCOUNT_EQUITY,
+        TOP3_SHARED_ACCOUNT_BUYING_POWER,
+    )
     render_account_summary(
         "Top 3 Shared Trading Account",
         top_rows,
-        "Structure ORB 45% / Metals ORB 45% / Quality 10%. Overnight = trades. Overall = since reset.",
+        "Uses actual shared-account equity snapshot. Bot cards below are allocation drill-down.",
+        override_summary=top3_account_summary,
     )
 
 with summary_col2:
@@ -1051,4 +1135,3 @@ render_bot_grid("Top 3 Shared Account Bots", top_rows)
 render_bot_grid("Other Bot Accounts", other_rows)
 
 st.caption("Responsive layout. Dashboard refreshes every 30 seconds.")
-
