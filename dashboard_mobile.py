@@ -299,6 +299,55 @@ def render_html(html):
     st.markdown(html, unsafe_allow_html=True)
 
 
+
+# ============================================================
+# BOT GROUPING / TRADE DEDUPE
+# ============================================================
+
+TOP_ACCOUNT_MATCHERS = [
+    "STRUCTURE HUNTER",
+    "STRUCTURE",
+    "METALS ORB",
+    "QUALITY HUNTER",
+    "QUALITY SIZER",
+    "QUILITY HUNTER",
+    "QUILITY",
+]
+
+
+def is_top_account_bot(bot_name):
+    name = str(bot_name or "").upper()
+    return any(match in name for match in TOP_ACCOUNT_MATCHERS)
+
+
+def sort_rows(rows):
+    return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
+
+
+def dedupe_trades_df(df):
+    """Remove duplicate trade rows caused by repeated trade logger passes."""
+    if df is None or df.empty:
+        return df
+
+    temp = df.copy()
+
+    if "trade_id" in temp.columns:
+        temp["_trade_id_str"] = temp["trade_id"].astype(str)
+        has_id = temp["_trade_id_str"].str.len() > 0
+        with_id = temp[has_id].drop_duplicates(subset=["_trade_id_str"], keep="last")
+        without_id = temp[~has_id]
+        temp = pd.concat([with_id, without_id], ignore_index=True).drop(columns=["_trade_id_str"], errors="ignore")
+
+    key_cols = [c for c in ["timestamp", "symbol", "side", "qty", "buy_price", "sell_price", "pnl"] if c in temp.columns]
+    if key_cols:
+        temp = temp.drop_duplicates(subset=key_cols, keep="last")
+
+    if "timestamp" in temp.columns:
+        temp = temp.sort_values("timestamp")
+
+    return temp
+
+
 try:
     data_by_tab, trades_by_tab = load_sheet_data()
 except Exception as e:
@@ -312,7 +361,7 @@ for bot_name, df in data_by_tab.items():
     latest = df.iloc[-1]
     equity, pnl, pct, session_date = bot_session_stats(df)
     trades = trades_by_tab.get(bot_name)
-    session_trades = session_slice(trades, session_date)
+    session_trades = dedupe_trades_df(session_slice(trades, session_date)) if trades is not None and not trades.empty else pd.DataFrame()
     trade_count = len(session_trades)
     trade_pnl = float(session_trades["pnl"].fillna(0).sum()) if not session_trades.empty and "pnl" in session_trades.columns else 0.0
     # Main card P&L uses equity change, matching Alpaca-style daily account movement.
