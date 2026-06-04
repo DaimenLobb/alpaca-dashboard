@@ -616,6 +616,55 @@ def since_top3_reset(df):
     return temp
 
 
+def normalise_top3_rows_to_account(top_rows):
+    """Scale Top 3 bot card P&L so the cards add back to the real shared account.
+
+    This handles missed/duplicated bot trade logs. The account header is the source of truth.
+    """
+    if not top_rows:
+        return top_rows
+
+    account_summary = account_equity_summary_from_rows(
+        top_rows,
+        TOP3_SHARED_ACCOUNT_EQUITY,
+        TOP3_SHARED_ACCOUNT_BUYING_POWER,
+    )
+
+    target_overall = float(account_summary.get("equity_overall", 0) or 0)
+    target_overnight = float(account_summary.get("equity_overnight", 0) or 0)
+
+    current_overall = sum(float(r.get("equity_overall", 0) or 0) for r in top_rows)
+    current_overnight = sum(float(r.get("pnl", 0) or 0) for r in top_rows)
+
+    overall_factor = 0.0 if abs(current_overall) < 0.01 else target_overall / current_overall
+    overnight_factor = 0.0 if abs(current_overnight) < 0.01 else target_overnight / current_overnight
+
+    fixed = []
+
+    for row in top_rows:
+        new_row = row.copy()
+        allocated_start = top3_allocated_start_equity(new_row["bot_name"]) or 0.0
+
+        old_overall = float(new_row.get("equity_overall", 0) or 0)
+        old_overnight = float(new_row.get("pnl", 0) or 0)
+
+        new_overall = old_overall * overall_factor
+        new_overnight = old_overnight * overnight_factor
+
+        new_row["equity_overall"] = new_overall
+        new_row["pnl"] = new_overnight
+        new_row["equity_overnight"] = new_overnight
+        new_row["bp_overall"] = new_overall * 2
+        new_row["bp_overnight"] = new_overnight * 2
+        new_row["equity"] = allocated_start + new_overall
+        new_row["buying_power"] = top3_allocated_buying_power(new_row["bot_name"]) + (new_overall * 2)
+        new_row["pct"] = 0.0 if allocated_start == 0 else (new_overnight / allocated_start) * 100
+
+        fixed.append(new_row)
+
+    return fixed
+
+
 def dedupe_trades_df(df):
     if df is None or df.empty:
         return df
@@ -1038,13 +1087,14 @@ def render_group(group_title, group_rows, subtitle):
                     render_html(trade_html)
 
 
-top_rows = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
+top_rows_raw = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
+top_rows = normalise_top3_rows_to_account(top_rows_raw)
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Sums latest Structure + Metals + Quality allocation slices.",
+    "Top 3 cards are normalised to the real shared-account total.",
 )
 
 render_group(
