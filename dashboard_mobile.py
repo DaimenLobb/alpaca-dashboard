@@ -665,46 +665,88 @@ def latest_valid_number(df, col):
 
 
 def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
-    """Use the actual shared account snapshot for the Top 3 summary.
+    """Top 3 account summary from allocation slices.
 
-    This avoids summing allocation drill-down cards when some bot tabs missed logging.
+    The shared account logs as three allocation slices:
+    - Structure 45%
+    - Metals 45%
+    - Quality 10%
+
+    So the account total must be the latest row from each bucket added together.
+    Do NOT take only the newest row, because that gives just one slice.
     """
-    source = latest_row_by_time(rows)
+    by_bucket = {}
 
-    if source is None:
-        return {
-            "equity": equity_baseline,
-            "equity_overnight": 0.0,
-            "equity_overall": 0.0,
-            "buying_power": bp_baseline,
-            "bp_overnight": 0.0,
-            "bp_overall": 0.0,
-            "positions": 0,
-            "orders": 0,
-            "trades": 0,
-        }
+    for row in rows:
+        bucket = top3_bucket(row.get("bot_name"))
+        if bucket is None:
+            continue
 
-    df = source.get("df")
-    raw_equity = float(source.get("raw_equity", 0) or 0)
-    raw_bp = latest_valid_number(df, "buying_power") if df is not None else 0.0
+        existing = by_bucket.get(bucket)
 
-    session_date = source.get("session_date")
-    sdf = session_slice(df, session_date) if df is not None and session_date is not None else pd.DataFrame()
+        if existing is None:
+            by_bucket[bucket] = row
+            continue
 
-    if sdf is not None and not sdf.empty:
-        start_equity = float(sdf.iloc[0].get("equity", raw_equity) or raw_equity)
-        start_bp = float(sdf.iloc[0].get("buying_power", raw_bp) or raw_bp)
-    else:
-        start_equity = raw_equity
-        start_bp = raw_bp
+        try:
+            current_ts = pd.Timestamp(row.get("last_update"))
+            existing_ts = pd.Timestamp(existing.get("last_update"))
+            if current_ts > existing_ts:
+                by_bucket[bucket] = row
+        except Exception:
+            by_bucket[bucket] = row
+
+    equity = 0.0
+    equity_overnight = 0.0
+    equity_overall = 0.0
+    buying_power = 0.0
+    bp_overnight = 0.0
+    bp_overall = 0.0
+
+    # Always include all three buckets. If one missed logging, carry its baseline
+    # rather than collapsing the whole account total.
+    for bucket, allocation in TOP3_ALLOCATIONS.items():
+        baseline_equity = equity_baseline * allocation
+        baseline_bp = bp_baseline * allocation
+        row = by_bucket.get(bucket)
+
+        if row is None:
+            equity += baseline_equity
+            buying_power += baseline_bp
+            continue
+
+        row_equity = float(row.get("raw_equity", row.get("equity", baseline_equity)) or baseline_equity)
+
+        df = row.get("df")
+        row_bp = latest_valid_number(df, "buying_power") if df is not None else float(row.get("buying_power", baseline_bp) or baseline_bp)
+        if not row_bp:
+            row_bp = float(row.get("buying_power", baseline_bp) or baseline_bp)
+
+        session_date = row.get("session_date")
+        sdf = session_slice(df, session_date) if df is not None and session_date is not None else pd.DataFrame()
+
+        if sdf is not None and not sdf.empty:
+            start_equity = float(sdf.iloc[0].get("equity", row_equity) or row_equity)
+            start_bp = float(sdf.iloc[0].get("buying_power", row_bp) or row_bp)
+        else:
+            start_equity = row_equity
+            start_bp = row_bp
+
+        equity += row_equity
+        equity_overnight += row_equity - start_equity
+        equity_overall += row_equity - baseline_equity
+
+        buying_power += row_bp
+        bp_overnight += row_bp - start_bp
+        bp_overall += row_bp - baseline_bp
 
     return {
-        "equity": raw_equity if raw_equity else equity_baseline,
-        "equity_overnight": raw_equity - start_equity,
-        "equity_overall": (raw_equity - equity_baseline) if raw_equity else 0.0,
-        "buying_power": raw_bp if raw_bp else bp_baseline,
-        "bp_overnight": (raw_bp - start_bp) if raw_bp else 0.0,
-        "bp_overall": (raw_bp - bp_baseline) if raw_bp else 0.0,
+        "equity": equity,
+        "equity_overnight": equity_overnight,
+        "equity_overall": equity_overall,
+        "buying_power": buying_power,
+        "bp_overnight": bp_overnight,
+        "bp_overall": bp_overall,
         "positions": sum(r["positions"] for r in rows),
         "orders": sum(r["orders"] for r in rows),
         "trades": sum(r["trades"] for r in rows),
@@ -1002,7 +1044,7 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Uses actual shared-account equity. Bot cards are allocation drill-down.",
+    "Sums latest Structure + Metals + Quality allocation slices.",
 )
 
 render_group(
