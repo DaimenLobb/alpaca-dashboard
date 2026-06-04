@@ -720,36 +720,6 @@ def top3_leaderboard_from_trades(trades_by_tab):
     return leaderboard, all_trades
 
 
-
-def top3_rank_lookup(trades_by_tab):
-    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
-    lookup = {}
-
-    for rank, item in enumerate(leaderboard, start=1):
-        lookup[item["bot_id"]] = {
-            "rank": rank,
-            "bot_id": item["bot_id"],
-            "bot_name": item["bot_name"],
-            "overall": float(item.get("pnl", 0) or 0),
-            "overnight": float(item.get("pnl", 0) or 0),
-            "trades": int(item.get("trades", 0) or 0),
-            "wins": int(item.get("wins", 0) or 0),
-            "losses": int(item.get("losses", 0) or 0),
-        }
-
-    return lookup
-
-
-def leaderboard_badge(rank):
-    if rank == 1:
-        return "🥇 1st"
-    if rank == 2:
-        return "🥈 2nd"
-    if rank == 3:
-        return "🥉 3rd"
-    return f"#{rank}"
-
-
 def since_top3_reset(df):
     if df is None or df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
@@ -998,6 +968,13 @@ def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
         buying_power += row_bp
         bp_overnight += row_bp - start_bp
         bp_overall += row_bp - baseline_bp
+
+    # Shared margin account: display buying power from account equity.
+    # This keeps the header at about $101,316 when equity is $50,658,
+    # instead of double-counting allocation slices.
+    buying_power = equity * 2
+    bp_overnight = equity_overnight * 2
+    bp_overall = equity_overall * 2
 
     return {
         "equity": equity,
@@ -1268,13 +1245,43 @@ def render_group(group_title, group_rows, subtitle):
         f'</div>'
     )
 
+    rank_lookup = {}
+    if "Top 3" in group_title:
+        leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+        for rank, item in enumerate(leaderboard, start=1):
+            rank_lookup[item["bot_id"]] = {
+                "rank": rank,
+                "badge": "🥇 1st" if rank == 1 else "🥈 2nd" if rank == 2 else "🥉 3rd",
+                "overnight": float(item.get("pnl", 0) or 0),
+                "overall": float(item.get("pnl", 0) or 0),
+            }
+
     for row in sort_rows(group_rows):
         cls = pnl_class(row["pnl"])
+        bot_id = row.get("bot_id") or normalise_bot_id("", row.get("bot_name", ""))
+
+        rank_info = rank_lookup.get(bot_id)
+        if rank_info:
+            badge = rank_info["badge"]
+            overnight_equity = rank_info["overnight"]
+            overall_equity = rank_info["overall"]
+        elif bot_id == "UNALLOCATED":
+            badge = "⚠️ Gap"
+            overnight_equity = float(row.get("pnl", 0) or 0)
+            overall_equity = float(row.get("equity_overall", 0) or 0)
+        else:
+            badge = ""
+            overnight_equity = float(row.get("pnl", 0) or 0)
+            overall_equity = float(row.get("equity_overall", 0) or 0)
+
+        overnight_cls = pnl_class(overnight_equity)
+        overall_cls = pnl_class(overall_equity)
+        title = f'{badge} {row["bot_name"]}'.strip()
 
         html = (
             f'<div class="bot-row bot-row-{cls}">'
             f'<div class="bot-topline">'
-            f'<div class="bot-name">{row["bot_name"]}</div>'\n            f'<div class="last-seen">{lb_badge}</div>'
+            f'<div class="bot-name">{title}</div>'
             f'<div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>'
             f'</div>'
             f'<div class="bot-subline">'
@@ -1287,8 +1294,8 @@ def render_group(group_title, group_rows, subtitle):
             f'<span>Trades {row["trades"]}</span>'
             f'</div>'
             f'<div class="bot-subline">'
-            f'<span>Overnight {row["pnl"]:+,.0f}</span>'
-            f'<span>Overall {row["equity_overall"]:+,.0f}</span>'
+            f'<span>Overnight Equity <b class="pnl-{overnight_cls}">{overnight_equity:+,.0f}</b></span>'
+            f'<span>Overall Equity <b class="pnl-{overall_cls}">{overall_equity:+,.0f}</b></span>'
             f'</div>'
             f'<div class="tiny">Last: {row["last_update"]}</div>'
             f'</div>'
@@ -1340,31 +1347,14 @@ def render_group(group_title, group_rows, subtitle):
 
 top_rows_raw = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
 top_rows = normalise_top3_rows_to_account(top_rows_raw)
-
-_top3_rank_lookup = top3_rank_lookup(trades_by_tab)
-for _row in top_rows:
-    _bot_id = _row.get("bot_id") or normalise_bot_id("", _row.get("bot_name", ""))
-    _rank = _top3_rank_lookup.get(_bot_id)
-    if _rank:
-        _row["leaderboard_rank"] = _rank["rank"]
-        _row["leaderboard_badge"] = leaderboard_badge(_rank["rank"])
-        _row["leaderboard_overnight"] = _rank["overnight"]
-        _row["leaderboard_overall"] = _rank["overall"]
-    elif _bot_id == "UNALLOCATED":
-        _row["leaderboard_rank"] = 99
-        _row["leaderboard_badge"] = "⚠️ Gap"
-        _row["leaderboard_overnight"] = _row.get("pnl", 0)
-        _row["leaderboard_overall"] = _row.get("equity_overall", 0)
-
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Leaderboard uses bot_id trade logs. Cards below are trade-log drilldowns.",
+    "Bot cards show rank, overnight equity, and overall equity from bot_id trade logs.",
 )
 
-render_top3_leaderboard()
 
 render_group(
     "Other Bot Accounts",
