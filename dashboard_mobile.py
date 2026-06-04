@@ -65,7 +65,7 @@ st.markdown("""
 
     .summary-card {
         border-radius: 20px;
-        border: 1px solid rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.22);
         background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08));
         padding: 14px;
         margin-bottom: 12px;
@@ -194,7 +194,7 @@ st.markdown("""
 
     .group-summary {
         border-radius: 18px;
-        border: 1px solid rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.22);
         padding: 12px 13px;
         margin-bottom: 12px;
         background: linear-gradient(120deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
@@ -720,6 +720,36 @@ def top3_leaderboard_from_trades(trades_by_tab):
     return leaderboard, all_trades
 
 
+
+def top3_rank_lookup(trades_by_tab):
+    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+    lookup = {}
+
+    for rank, item in enumerate(leaderboard, start=1):
+        lookup[item["bot_id"]] = {
+            "rank": rank,
+            "bot_id": item["bot_id"],
+            "bot_name": item["bot_name"],
+            "overall": float(item.get("pnl", 0) or 0),
+            "overnight": float(item.get("pnl", 0) or 0),
+            "trades": int(item.get("trades", 0) or 0),
+            "wins": int(item.get("wins", 0) or 0),
+            "losses": int(item.get("losses", 0) or 0),
+        }
+
+    return lookup
+
+
+def leaderboard_badge(rank):
+    if rank == 1:
+        return "🥇 1st"
+    if rank == 2:
+        return "🥈 2nd"
+    if rank == 3:
+        return "🥉 3rd"
+    return f"#{rank}"
+
+
 def since_top3_reset(df):
     if df is None or df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
@@ -1153,26 +1183,28 @@ def render_top3_leaderboard():
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉"
 
         rows_html += (
-            f'<div class="leaderboard-row">'
-            f'<div class="leaderboard-rank">{medal}</div>'
+            f'<div style="display:grid;grid-template-columns:42px 1fr 92px 92px;gap:8px;align-items:center;padding:13px 0;border-top:1px solid rgba(255,255,255,0.14);">'
+            f'<div style="font-size:1.45rem;font-weight:950;">{medal}</div>'
             f'<div>'
-            f'<div class="leaderboard-name">{item["bot_name"]}</div>'
-            f'<div class="leaderboard-sub">Trades {item["trades"]} · Wins {item["wins"]} / Losses {item["losses"]}</div>'
+            f'<div style="font-size:1.08rem;font-weight:950;color:#fff;">{item["bot_name"]}</div>'
+            f'<div style="font-size:0.76rem;color:#9fb0bb;margin-top:2px;">Trades {item["trades"]} · Wins {item["wins"]} / Losses {item["losses"]}</div>'
             f'</div>'
             f'<div>'
-            f'<div class="leaderboard-label">Overnight</div>'
-            f'<div class="leaderboard-value pnl-{overnight_cls}">{overnight:+,.0f}</div>'
+            f'<div style="font-size:0.62rem;color:#9fb0bb;text-align:right;text-transform:uppercase;font-weight:900;">Overnight</div>'
+            f'<div class="pnl-{overnight_cls}" style="font-size:1.02rem;font-weight:950;text-align:right;">{overnight:+,.0f}</div>'
             f'</div>'
             f'<div>'
-            f'<div class="leaderboard-label">Overall</div>'
-            f'<div class="leaderboard-value pnl-{overall_cls}">{overall:+,.0f}</div>'
+            f'<div style="font-size:0.62rem;color:#9fb0bb;text-align:right;text-transform:uppercase;font-weight:900;">Overall</div>'
+            f'<div class="pnl-{overall_cls}" style="font-size:1.02rem;font-weight:950;text-align:right;">{overall:+,.0f}</div>'
             f'</div>'
             f'</div>'
         )
 
     render_html(
-        f'<div class="leaderboard-card">'
-        f'<div class="leaderboard-title">🏆 Top 3 Running Leaderboard</div>'
+        f'<div style="border-radius:24px;border:1px solid rgba(255,255,255,0.22);border-left:10px solid #00e676;'
+        f'background:linear-gradient(145deg, rgba(0,200,83,0.26), rgba(255,255,255,0.075));'
+        f'padding:20px 18px;margin:18px 0 28px 0;box-shadow:0 18px 40px rgba(0,0,0,0.38);">'
+        f'<div style="font-size:1.55rem;font-weight:950;color:white;margin-bottom:12px;">🏆 Top 3 Running Leaderboard</div>'
         f'{rows_html}'
         f'<div class="last-seen">Overall totals start from the 50k account reset and use bot_id trade logs.</div>'
         f'</div>'
@@ -1242,7 +1274,7 @@ def render_group(group_title, group_rows, subtitle):
         html = (
             f'<div class="bot-row bot-row-{cls}">'
             f'<div class="bot-topline">'
-            f'<div class="bot-name">{row["bot_name"]}</div>'
+            f'<div class="bot-name">{row["bot_name"]}</div>'\n            f'<div class="last-seen">{lb_badge}</div>'
             f'<div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>'
             f'</div>'
             f'<div class="bot-subline">'
@@ -1308,6 +1340,22 @@ def render_group(group_title, group_rows, subtitle):
 
 top_rows_raw = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
 top_rows = normalise_top3_rows_to_account(top_rows_raw)
+
+_top3_rank_lookup = top3_rank_lookup(trades_by_tab)
+for _row in top_rows:
+    _bot_id = _row.get("bot_id") or normalise_bot_id("", _row.get("bot_name", ""))
+    _rank = _top3_rank_lookup.get(_bot_id)
+    if _rank:
+        _row["leaderboard_rank"] = _rank["rank"]
+        _row["leaderboard_badge"] = leaderboard_badge(_rank["rank"])
+        _row["leaderboard_overnight"] = _rank["overnight"]
+        _row["leaderboard_overall"] = _rank["overall"]
+    elif _bot_id == "UNALLOCATED":
+        _row["leaderboard_rank"] = 99
+        _row["leaderboard_badge"] = "⚠️ Gap"
+        _row["leaderboard_overnight"] = _row.get("pnl", 0)
+        _row["leaderboard_overall"] = _row.get("equity_overall", 0)
+
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 
 render_group(
