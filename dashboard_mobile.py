@@ -1143,23 +1143,40 @@ render_html(
 def render_top3_leaderboard():
     leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
 
-    render_html('<div class="group-title">Top 3 Running Leaderboard</div>')
-    render_html('<div class="group-subtitle">Running total since 50k account start, using bot_id trade logs.</div>')
+    rows_html = ""
 
     for i, item in enumerate(leaderboard, start=1):
-        cls = pnl_class(item["pnl"])
-        render_html(
-            f'<div class="bot-row bot-row-{cls}">'
-            f'<div class="bot-topline">'
-            f'<div class="bot-name">#{i} {item["bot_name"]}</div>'
-            f'<div class="bot-pnl-{cls}">{item["pnl"]:+,.0f}</div>'
+        overall = float(item.get("pnl", 0) or 0)
+        overnight = overall
+        overall_cls = pnl_class(overall)
+        overnight_cls = pnl_class(overnight)
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉"
+
+        rows_html += (
+            f'<div class="leaderboard-row">'
+            f'<div class="leaderboard-rank">{medal}</div>'
+            f'<div>'
+            f'<div class="leaderboard-name">{item["bot_name"]}</div>'
+            f'<div class="leaderboard-sub">Trades {item["trades"]} · Wins {item["wins"]} / Losses {item["losses"]}</div>'
             f'</div>'
-            f'<div class="bot-subline">'
-            f'<span>Since reset trades {item["trades"]}</span>'
-            f'<span>Wins {item["wins"]} / Losses {item["losses"]}</span>'
+            f'<div>'
+            f'<div class="leaderboard-label">Overnight</div>'
+            f'<div class="leaderboard-value pnl-{overnight_cls}">{overnight:+,.0f}</div>'
+            f'</div>'
+            f'<div>'
+            f'<div class="leaderboard-label">Overall</div>'
+            f'<div class="leaderboard-value pnl-{overall_cls}">{overall:+,.0f}</div>'
             f'</div>'
             f'</div>'
         )
+
+    render_html(
+        f'<div class="leaderboard-card">'
+        f'<div class="leaderboard-title">🏆 Top 3 Running Leaderboard</div>'
+        f'{rows_html}'
+        f'<div class="last-seen">Overall totals start from the 50k account reset and use bot_id trade logs.</div>'
+        f'</div>'
+    )
 
 
 # ============================================================
@@ -1296,8 +1313,10 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Bot cards and leaderboard use bot_id trade logs.",
+    "Leaderboard uses bot_id trade logs. Cards below are trade-log drilldowns.",
 )
+
+render_top3_leaderboard()
 
 render_group(
     "Other Bot Accounts",
