@@ -380,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Overnight shows trade P&L. Overall shows total change since reset.")
+st.caption("Top 3 running leaderboard starts from the 50k account reset.")
 
 
 # ============================================================
@@ -651,6 +651,7 @@ def add_bot_id_to_trade_df(df, fallback_name):
 
 
 def top3_all_trade_rows_by_bot(trades_by_tab):
+    """All Top 3 trades since TOP3_RESET_ET. This is the running leaderboard source."""
     rows = []
 
     for tab_name, trades in trades_by_tab.items():
@@ -1142,8 +1143,8 @@ render_html(
 def render_top3_leaderboard():
     leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
 
-    render_html('<div class="group-title">Top 3 Bot Leaderboard</div>')
-    render_html('<div class="group-subtitle">Based on bot_id in Google trade logs.</div>')
+    render_html('<div class="group-title">Top 3 Running Leaderboard</div>')
+    render_html('<div class="group-subtitle">Running total since 50k account start, using bot_id trade logs.</div>')
 
     for i, item in enumerate(leaderboard, start=1):
         cls = pnl_class(item["pnl"])
@@ -1154,7 +1155,7 @@ def render_top3_leaderboard():
             f'<div class="bot-pnl-{cls}">{item["pnl"]:+,.0f}</div>'
             f'</div>'
             f'<div class="bot-subline">'
-            f'<span>Trades {item["trades"]}</span>'
+            f'<span>Since reset trades {item["trades"]}</span>'
             f'<span>Wins {item["wins"]} / Losses {item["losses"]}</span>'
             f'</div>'
             f'</div>'
