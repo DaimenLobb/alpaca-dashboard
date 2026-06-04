@@ -643,6 +643,74 @@ def sort_rows(rows):
     return sorted(rows, key=lambda r: (r["pnl"] < 0, -abs(r["pnl"]), r["bot_name"]))
 
 
+def latest_row_by_time(rows):
+    if not rows:
+        return None
+
+    def key_func(row):
+        try:
+            return pd.Timestamp(row.get("last_update"))
+        except Exception:
+            return pd.Timestamp.min.tz_localize("UTC")
+
+    return max(rows, key=key_func)
+
+
+def latest_valid_number(df, col):
+    if df is None or df.empty or col not in df.columns:
+        return 0.0
+    values = pd.to_numeric(df[col], errors="coerce").dropna()
+    values = values[values > 0]
+    return float(values.iloc[-1]) if not values.empty else 0.0
+
+
+def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
+    """Use the actual shared account snapshot for the Top 3 summary.
+
+    This avoids summing allocation drill-down cards when some bot tabs missed logging.
+    """
+    source = latest_row_by_time(rows)
+
+    if source is None:
+        return {
+            "equity": equity_baseline,
+            "equity_overnight": 0.0,
+            "equity_overall": 0.0,
+            "buying_power": bp_baseline,
+            "bp_overnight": 0.0,
+            "bp_overall": 0.0,
+            "positions": 0,
+            "orders": 0,
+            "trades": 0,
+        }
+
+    df = source.get("df")
+    raw_equity = float(source.get("raw_equity", 0) or 0)
+    raw_bp = latest_valid_number(df, "buying_power") if df is not None else 0.0
+
+    session_date = source.get("session_date")
+    sdf = session_slice(df, session_date) if df is not None and session_date is not None else pd.DataFrame()
+
+    if sdf is not None and not sdf.empty:
+        start_equity = float(sdf.iloc[0].get("equity", raw_equity) or raw_equity)
+        start_bp = float(sdf.iloc[0].get("buying_power", raw_bp) or raw_bp)
+    else:
+        start_equity = raw_equity
+        start_bp = raw_bp
+
+    return {
+        "equity": raw_equity if raw_equity else equity_baseline,
+        "equity_overnight": raw_equity - start_equity,
+        "equity_overall": (raw_equity - equity_baseline) if raw_equity else 0.0,
+        "buying_power": raw_bp if raw_bp else bp_baseline,
+        "bp_overnight": (raw_bp - start_bp) if raw_bp else 0.0,
+        "bp_overall": (raw_bp - bp_baseline) if raw_bp else 0.0,
+        "positions": sum(r["positions"] for r in rows),
+        "orders": sum(r["orders"] for r in rows),
+        "trades": sum(r["trades"] for r in rows),
+    }
+
+
 def first_valid_number(df, col):
     if df is None or df.empty or col not in df.columns:
         return 0.0
@@ -782,6 +850,7 @@ for bot_name, df in data_by_tab.items():
         "trade_pnl": trade_pnl,
         "session_date": session_date,
         "session_trades": session_trades,
+        "df": df,
     })
 
 if not valid_rows:
@@ -808,15 +877,32 @@ def render_group(group_title, group_rows, subtitle):
     if not group_rows:
         return
 
-    group_equity = sum(r["equity"] for r in group_rows)
-    group_equity_overnight = sum(r["equity_overnight"] for r in group_rows)
-    group_equity_overall = sum(r["equity_overall"] for r in group_rows)
-    group_bp = sum(r["buying_power"] for r in group_rows)
-    group_bp_overnight = sum(r["bp_overnight"] for r in group_rows)
-    group_bp_overall = sum(r["bp_overall"] for r in group_rows)
-    group_positions = sum(r["positions"] for r in group_rows)
-    group_orders = sum(r["orders"] for r in group_rows)
-    group_trades = sum(r["trades"] for r in group_rows)
+    if "Top 3" in group_title:
+        account_summary = account_equity_summary_from_rows(
+            group_rows,
+            TOP3_SHARED_ACCOUNT_EQUITY,
+            TOP3_SHARED_ACCOUNT_BUYING_POWER,
+        )
+        group_equity = account_summary["equity"]
+        group_equity_overnight = account_summary["equity_overnight"]
+        group_equity_overall = account_summary["equity_overall"]
+        group_bp = account_summary["buying_power"]
+        group_bp_overnight = account_summary["bp_overnight"]
+        group_bp_overall = account_summary["bp_overall"]
+        group_positions = account_summary["positions"]
+        group_orders = account_summary["orders"]
+        group_trades = account_summary["trades"]
+    else:
+        group_equity = sum(r["equity"] for r in group_rows)
+        group_equity_overnight = sum(r["equity_overnight"] for r in group_rows)
+        group_equity_overall = sum(r["equity_overall"] for r in group_rows)
+        group_bp = sum(r["buying_power"] for r in group_rows)
+        group_bp_overnight = sum(r["bp_overnight"] for r in group_rows)
+        group_bp_overall = sum(r["bp_overall"] for r in group_rows)
+        group_positions = sum(r["positions"] for r in group_rows)
+        group_orders = sum(r["orders"] for r in group_rows)
+        group_trades = sum(r["trades"] for r in group_rows)
+
     cls = pnl_class(group_equity_overnight)
 
     eq_overnight_cls = metric_class(group_equity_overnight)
@@ -916,7 +1002,7 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Structure ORB 45% / Metals ORB 45% / Quality 10%. Zeroed from reset.",
+    "Uses actual shared-account equity. Bot cards are allocation drill-down.",
 )
 
 render_group(
@@ -926,4 +1012,3 @@ render_group(
 )
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
-
