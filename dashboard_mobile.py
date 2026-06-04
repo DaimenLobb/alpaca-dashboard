@@ -606,6 +606,119 @@ def top3_allocated_buying_power(bot_name):
     return TOP3_SHARED_ACCOUNT_BUYING_POWER * TOP3_ALLOCATIONS[bucket]
 
 
+TOP3_BOT_LABELS = {
+    "QUALITY_SIZER": "Quality Sizer",
+    "METALS_ORB": "Metals ORB",
+    "STRUCTURE_ORB": "Structure ORB",
+}
+
+
+def normalise_bot_id(value, fallback_name=""):
+    value = str(value or "").strip().upper()
+
+    if value in TOP3_BOT_LABELS:
+        return value
+
+    name = str(fallback_name or "").upper()
+
+    if "QUALITY" in name or "QUILITY" in name:
+        return "QUALITY_SIZER"
+
+    if "METALS" in name:
+        return "METALS_ORB"
+
+    if "STRUCTURE" in name:
+        return "STRUCTURE_ORB"
+
+    return value or "UNKNOWN"
+
+
+def add_bot_id_to_trade_df(df, fallback_name):
+    if df is None or df.empty:
+        return df
+
+    temp = df.copy()
+
+    if "bot_id" not in temp.columns:
+        temp["bot_id"] = normalise_bot_id("", fallback_name)
+    else:
+        temp["bot_id"] = temp["bot_id"].apply(lambda x: normalise_bot_id(x, fallback_name))
+
+    if "bot_name" not in temp.columns:
+        temp["bot_name"] = temp["bot_id"].map(TOP3_BOT_LABELS).fillna(fallback_name)
+
+    return temp
+
+
+def top3_all_trade_rows_by_bot(trades_by_tab):
+    rows = []
+
+    for tab_name, trades in trades_by_tab.items():
+        if not is_top_account_bot(tab_name):
+            continue
+
+        if trades is None or trades.empty:
+            continue
+
+        temp = add_bot_id_to_trade_df(trades, tab_name)
+        temp = since_top3_reset(temp)
+        temp = dedupe_trades_df(temp)
+
+        if temp is None or temp.empty:
+            continue
+
+        for _, trade in temp.iterrows():
+            rows.append(trade)
+
+    if not rows:
+        return pd.DataFrame()
+
+    all_trades = pd.DataFrame(rows)
+    all_trades = dedupe_trades_df(all_trades)
+
+    if "bot_id" not in all_trades.columns:
+        all_trades["bot_id"] = "UNKNOWN"
+
+    return all_trades
+
+
+def top3_leaderboard_from_trades(trades_by_tab):
+    all_trades = top3_all_trade_rows_by_bot(trades_by_tab)
+
+    leaderboard = []
+
+    for bot_id, label in TOP3_BOT_LABELS.items():
+        subset = pd.DataFrame()
+        pnl = 0.0
+        trades_count = 0
+        wins = 0
+        losses = 0
+
+        if all_trades is not None and not all_trades.empty and "bot_id" in all_trades.columns:
+            subset = all_trades[all_trades["bot_id"] == bot_id].copy()
+
+        if subset is not None and not subset.empty:
+            if "pnl" in subset.columns:
+                pnl_series = pd.to_numeric(subset["pnl"], errors="coerce").fillna(0)
+                pnl = float(pnl_series.sum())
+                wins = int((pnl_series > 0).sum())
+                losses = int((pnl_series < 0).sum())
+            trades_count = len(subset)
+
+        leaderboard.append({
+            "bot_id": bot_id,
+            "bot_name": label,
+            "pnl": pnl,
+            "trades": trades_count,
+            "wins": wins,
+            "losses": losses,
+            "session_trades": subset,
+        })
+
+    leaderboard.sort(key=lambda r: r["pnl"], reverse=True)
+    return leaderboard, all_trades
+
+
 def since_top3_reset(df):
     if df is None or df.empty or "timestamp" not in df.columns:
         return pd.DataFrame()
@@ -617,50 +730,116 @@ def since_top3_reset(df):
 
 
 def normalise_top3_rows_to_account(top_rows):
-    """Scale Top 3 bot card P&L so the cards add back to the real shared account.
+    """Top 3 bot cards use bot_id trade logs.
 
-    This handles missed/duplicated bot trade logs. The account header is the source of truth.
+    Header remains actual shared-account equity.
+    Bot cards show logged trade P&L by bot_id.
+    Any gap between account P&L and logged trade P&L becomes Unallocated.
     """
-    if not top_rows:
-        return top_rows
+    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+
+    row_lookup = {}
+    for r in top_rows:
+        row_lookup[normalise_bot_id("", r.get("bot_name"))] = r
+
+    source = latest_row_by_time(top_rows) if top_rows else None
+    fixed = []
+
+    for item in leaderboard:
+        bot_id = item["bot_id"]
+        label = item["bot_name"]
+        base_row = row_lookup.get(bot_id)
+
+        if base_row is None:
+            if bot_id == "QUALITY_SIZER":
+                allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.10
+            else:
+                allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
+
+            base_row = {
+                "bot_name": label,
+                "equity": allocated_start,
+                "raw_equity": allocated_start,
+                "pnl": 0.0,
+                "equity_pnl": 0.0,
+                "equity_overnight": 0.0,
+                "equity_overall": 0.0,
+                "bp_overnight": 0.0,
+                "bp_overall": 0.0,
+                "pct": 0.0,
+                "buying_power": allocated_start * 2,
+                "positions": 0,
+                "orders": 0,
+                "last_update": source.get("last_update") if source else "",
+                "trades": 0,
+                "trade_pnl": 0.0,
+                "session_date": source.get("session_date") if source else None,
+                "session_trades": pd.DataFrame(),
+                "df": source.get("df") if source else pd.DataFrame(),
+            }
+
+        new_row = base_row.copy()
+
+        if bot_id == "QUALITY_SIZER":
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.10
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.10
+        elif bot_id == "METALS_ORB":
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.45
+        else:
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.45
+
+        pnl = float(item["pnl"] or 0)
+        new_row["bot_name"] = label
+        new_row["bot_id"] = bot_id
+        new_row["pnl"] = pnl
+        new_row["equity_overnight"] = pnl
+        new_row["equity_overall"] = pnl
+        new_row["bp_overnight"] = pnl * 2
+        new_row["bp_overall"] = pnl * 2
+        new_row["equity"] = allocated_start + pnl
+        new_row["buying_power"] = allocated_bp + (pnl * 2)
+        new_row["pct"] = 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100
+        new_row["trades"] = int(item["trades"])
+        new_row["trade_pnl"] = pnl
+        new_row["session_trades"] = item["session_trades"]
+
+        fixed.append(new_row)
 
     account_summary = account_equity_summary_from_rows(
         top_rows,
         TOP3_SHARED_ACCOUNT_EQUITY,
         TOP3_SHARED_ACCOUNT_BUYING_POWER,
     )
+    account_overall = float(account_summary.get("equity_overall", 0) or 0)
+    logged_total = sum(float(r.get("equity_overall", 0) or 0) for r in fixed)
+    unallocated = account_overall - logged_total
 
-    target_overall = float(account_summary.get("equity_overall", 0) or 0)
-    target_overnight = float(account_summary.get("equity_overnight", 0) or 0)
-
-    current_overall = sum(float(r.get("equity_overall", 0) or 0) for r in top_rows)
-    current_overnight = sum(float(r.get("pnl", 0) or 0) for r in top_rows)
-
-    overall_factor = 0.0 if abs(current_overall) < 0.01 else target_overall / current_overall
-    overnight_factor = 0.0 if abs(current_overnight) < 0.01 else target_overnight / current_overnight
-
-    fixed = []
-
-    for row in top_rows:
-        new_row = row.copy()
-        allocated_start = top3_allocated_start_equity(new_row["bot_name"]) or 0.0
-
-        old_overall = float(new_row.get("equity_overall", 0) or 0)
-        old_overnight = float(new_row.get("pnl", 0) or 0)
-
-        new_overall = old_overall * overall_factor
-        new_overnight = old_overnight * overnight_factor
-
-        new_row["equity_overall"] = new_overall
-        new_row["pnl"] = new_overnight
-        new_row["equity_overnight"] = new_overnight
-        new_row["bp_overall"] = new_overall * 2
-        new_row["bp_overnight"] = new_overnight * 2
-        new_row["equity"] = allocated_start + new_overall
-        new_row["buying_power"] = top3_allocated_buying_power(new_row["bot_name"]) + (new_overall * 2)
-        new_row["pct"] = 0.0 if allocated_start == 0 else (new_overnight / allocated_start) * 100
-
-        fixed.append(new_row)
+    if abs(unallocated) >= 0.5:
+        source = latest_row_by_time(top_rows) if top_rows else None
+        fixed.append({
+            "bot_name": "Unallocated / Missing Logs",
+            "bot_id": "UNALLOCATED",
+            "equity": unallocated,
+            "raw_equity": unallocated,
+            "pnl": unallocated,
+            "equity_pnl": unallocated,
+            "equity_overnight": unallocated,
+            "equity_overall": unallocated,
+            "bp_overnight": unallocated * 2,
+            "bp_overall": unallocated * 2,
+            "pct": 0.0,
+            "buying_power": unallocated * 2,
+            "positions": 0,
+            "orders": 0,
+            "last_update": source.get("last_update") if source else "",
+            "trades": 0,
+            "trade_pnl": 0.0,
+            "session_date": source.get("session_date") if source else None,
+            "session_trades": pd.DataFrame(),
+            "df": source.get("df") if source else pd.DataFrame(),
+        })
 
     return fixed
 
@@ -960,6 +1139,28 @@ render_html(
 )
 
 
+def render_top3_leaderboard():
+    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+
+    render_html('<div class="group-title">Top 3 Bot Leaderboard</div>')
+    render_html('<div class="group-subtitle">Based on bot_id in Google trade logs.</div>')
+
+    for i, item in enumerate(leaderboard, start=1):
+        cls = pnl_class(item["pnl"])
+        render_html(
+            f'<div class="bot-row bot-row-{cls}">'
+            f'<div class="bot-topline">'
+            f'<div class="bot-name">#{i} {item["bot_name"]}</div>'
+            f'<div class="bot-pnl-{cls}">{item["pnl"]:+,.0f}</div>'
+            f'</div>'
+            f'<div class="bot-subline">'
+            f'<span>Trades {item["trades"]}</span>'
+            f'<span>Wins {item["wins"]} / Losses {item["losses"]}</span>'
+            f'</div>'
+            f'</div>'
+        )
+
+
 # ============================================================
 # RENDER
 # ============================================================
@@ -1094,7 +1295,7 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Top 3 cards are normalised to the real shared-account total.",
+    "Bot cards and leaderboard use bot_id trade logs.",
 )
 
 render_group(
