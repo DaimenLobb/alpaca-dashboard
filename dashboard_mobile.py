@@ -419,6 +419,34 @@ def get_credentials():
 
 
 @st.cache_data(ttl=30)
+def _make_unique_headers(raw_headers):
+    """Make Google Sheet headers safe for pandas/gspread.
+
+    Google Sheets can have blank or duplicate header cells. gspread
+    get_all_records() crashes on that, so the dashboard reads raw values
+    and repairs headers locally.
+    """
+    headers = []
+    seen = {}
+
+    for idx, header in enumerate(raw_headers):
+        name = str(header or "").strip()
+
+        if not name:
+            name = f"blank_{idx + 1}"
+
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}_{seen[name]}"
+        else:
+            seen[name] = 1
+
+        headers.append(name)
+
+    return headers
+
+
+@st.cache_data(ttl=30)
 def load_sheet_data():
     creds = get_credentials()
     client = gspread.authorize(creds)
@@ -428,12 +456,50 @@ def load_sheet_data():
     trade_tabs = {}
 
     for worksheet in spreadsheet.worksheets():
-        rows = worksheet.get_all_records()
+        title = worksheet.title
 
-        if not rows:
+        try:
+            values = worksheet.get_all_values()
+        except Exception as e:
+            print(f"[SHEET SKIP] {title}: {type(e).__name__}: {e}")
             continue
 
-        df = pd.DataFrame(rows)
+        if not values or len(values) < 2:
+            continue
+
+        raw_headers = values[0]
+        headers = _make_unique_headers(raw_headers)
+
+        data_rows = values[1:]
+
+        # Pad or trim rows to match headers.
+        clean_rows = []
+        for row in data_rows:
+            if not any(str(v).strip() for v in row):
+                continue
+
+            if len(row) < len(headers):
+                row = row + [""] * (len(headers) - len(row))
+            elif len(row) > len(headers):
+                row = row[:len(headers)]
+
+            clean_rows.append(row)
+
+        if not clean_rows:
+            continue
+
+        df = pd.DataFrame(clean_rows, columns=headers)
+
+        # Drop repaired blank columns. They are only there to prevent crashes.
+        blank_cols = [c for c in df.columns if str(c).startswith("blank_")]
+        if blank_cols:
+            df = df.drop(columns=blank_cols, errors="ignore")
+
+        # Drop duplicated columns just in case.
+        df = df.loc[:, ~df.columns.duplicated()]
+
+        if df.empty:
+            continue
 
         if "timestamp" in df.columns:
             df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
@@ -453,8 +519,6 @@ def load_sheet_data():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        title = worksheet.title
-
         if title.endswith(" Trades"):
             trade_tabs[title.replace(" Trades", "")] = df
         else:
@@ -463,6 +527,7 @@ def load_sheet_data():
             snapshot_tabs[title] = df
 
     return snapshot_tabs, trade_tabs
+
 
 
 # ============================================================
