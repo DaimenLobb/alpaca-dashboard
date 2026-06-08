@@ -380,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Top 3 running leaderboard starts from the 50k account reset.")
+st.caption("Top 3 running leaderboard starts from the $53,620.22 account reset.")
 
 
 # ============================================================
@@ -519,6 +519,9 @@ def load_sheet_data():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
+        if is_excluded_bot(title.replace(" Trades", "")):
+            continue
+
         if title.endswith(" Trades"):
             trade_tabs[title.replace(" Trades", "")] = df
         else:
@@ -619,8 +622,8 @@ def render_html(html):
 # TOP 3 SHARED ACCOUNT CONFIG
 # ============================================================
 
-TOP3_SHARED_ACCOUNT_EQUITY = 50000.0
-TOP3_SHARED_ACCOUNT_BUYING_POWER = 100000.0
+TOP3_SHARED_ACCOUNT_EQUITY = 53620.22
+TOP3_SHARED_ACCOUNT_BUYING_POWER = 107240.44
 
 TOP3_ALLOCATIONS = {
     "STRUCTURE": 0.45,
@@ -671,6 +674,19 @@ def top3_allocated_buying_power(bot_name):
     return TOP3_SHARED_ACCOUNT_BUYING_POWER * TOP3_ALLOCATIONS[bucket]
 
 
+EXCLUDED_BOT_KEYWORDS = [
+    "TECH HUNTER FULL RUNNER",
+    "RECOVERY 20-50",
+    "INSTITUTIONAL ORB",
+    "MARKET SCOUT",
+]
+
+
+def is_excluded_bot(bot_name):
+    name = str(bot_name or "").upper()
+    return any(keyword in name for keyword in EXCLUDED_BOT_KEYWORDS)
+
+
 TOP3_BOT_LABELS = {
     "QUALITY_SIZER": "Quality Sizer",
     "METALS_ORB": "Metals ORB",
@@ -715,6 +731,24 @@ def add_bot_id_to_trade_df(df, fallback_name):
     return temp
 
 
+def trade_row_confirmed_for_bot(trade, bot_id):
+    """Only count trades that were logged by the owning bot.
+
+    Old shared-account trade logs are polluted because each bot could read the
+    whole Alpaca account and log the same closed orders as itself.
+    New bot patches write entry_client_order_id and exit_client_order_id.
+    We only count rows where both IDs start with the same bot_id.
+    """
+    entry_cid = str(trade.get("entry_client_order_id", "") or "")
+    exit_cid = str(trade.get("exit_client_order_id", "") or "")
+
+    if not entry_cid or not exit_cid:
+        return False
+
+    prefix = f"{bot_id}-"
+    return entry_cid.startswith(prefix) and exit_cid.startswith(prefix)
+
+
 def top3_all_trade_rows_by_bot(trades_by_tab):
     """All Top 3 trades since TOP3_RESET_ET. This is the running leaderboard source."""
     rows = []
@@ -734,6 +768,9 @@ def top3_all_trade_rows_by_bot(trades_by_tab):
             continue
 
         for _, trade in temp.iterrows():
+            bot_id = normalise_bot_id(trade.get("bot_id", ""), tab_name)
+            if not trade_row_confirmed_for_bot(trade, bot_id):
+                continue
             rows.append(trade)
 
     if not rows:
@@ -882,31 +919,7 @@ def normalise_top3_rows_to_account(top_rows):
     logged_total = sum(float(r.get("equity_overall", 0) or 0) for r in fixed)
     unallocated = account_overall - logged_total
 
-    if abs(unallocated) >= 0.5:
-        source = latest_row_by_time(top_rows) if top_rows else None
-        fixed.append({
-            "bot_name": "Unallocated / Missing Logs",
-            "bot_id": "UNALLOCATED",
-            "equity": unallocated,
-            "raw_equity": unallocated,
-            "pnl": unallocated,
-            "equity_pnl": unallocated,
-            "equity_overnight": unallocated,
-            "equity_overall": unallocated,
-            "bp_overnight": unallocated * 2,
-            "bp_overall": unallocated * 2,
-            "pct": 0.0,
-            "buying_power": unallocated * 2,
-            "positions": 0,
-            "orders": 0,
-            "last_update": source.get("last_update") if source else "",
-            "trades": 0,
-            "trade_pnl": 0.0,
-            "session_date": source.get("session_date") if source else None,
-            "session_trades": pd.DataFrame(),
-            "df": source.get("df") if source else pd.DataFrame(),
-        })
-
+    # Do not create an Unallocated card for pre-owner-safe historical rows.
     return fixed
 
 
@@ -1037,6 +1050,10 @@ def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
     # Shared margin account: display buying power from account equity.
     # This keeps the header at about $101,316 when equity is $50,658,
     # instead of double-counting allocation slices.
+    buying_power = equity * 2
+    bp_overnight = equity_overnight * 2
+    bp_overall = equity_overall * 2
+
     buying_power = equity * 2
     bp_overnight = equity_overnight * 2
     bp_overall = equity_overall * 2
@@ -1207,7 +1224,7 @@ render_html(
     f'<div class="summary-card summary-card-flat">'
     f'<div class="summary-label">Split Dashboard</div>'
     f'<div class="summary-value" style="font-size:1.25rem;">Overnight / Overall</div>'
-    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $50k equity / $100k buying power.</div>'
+    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $53,620.22 equity / $107,240.44 buying power.</div>'
     f'</div>'
 )
 
@@ -1248,7 +1265,7 @@ def render_top3_leaderboard():
         f'padding:20px 18px;margin:18px 0 28px 0;box-shadow:0 18px 40px rgba(0,0,0,0.38);">'
         f'<div style="font-size:1.55rem;font-weight:950;color:white;margin-bottom:12px;">🏆 Top 3 Running Leaderboard</div>'
         f'{rows_html}'
-        f'<div class="last-seen">Overall totals start from the 50k account reset and use bot_id trade logs.</div>'
+        f'<div class="last-seen">Leaderboard starts from the $53,620.22 clean reset.</div>'
         f'</div>'
     )
 
@@ -1410,6 +1427,7 @@ def render_group(group_title, group_rows, subtitle):
                     render_html(trade_html)
 
 
+valid_rows = [r for r in valid_rows if not is_excluded_bot(r["bot_name"])]
 top_rows_raw = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
 top_rows = normalise_top3_rows_to_account(top_rows_raw)
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
@@ -1417,7 +1435,7 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Bot cards show rank, overnight equity, and overall equity from bot_id trade logs.",
+    "Clean reset from $53,620.22. Owner-safe bot_id trade logs only.",
 )
 
 
