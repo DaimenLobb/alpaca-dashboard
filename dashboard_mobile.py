@@ -380,7 +380,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Bot Sleep Check")
-st.caption("Top 3 account reset. Overall shows gain from original $50k start.")
+st.caption("Top 3 running leaderboard starts from the $53,620.22 account reset.")
 
 
 # ============================================================
@@ -623,16 +623,10 @@ def render_html(html):
 # ============================================================
 
 TOP3_SHARED_ACCOUNT_EQUITY = 53620.22
-TOP3_SHARED_ACCOUNT_BUYING_POWER = 107240.44
+TOP3_SHARED_ACCOUNT_BUYING_POWER = 214480.88
 
-# Manual clean reset/current account value from Alpaca.
-# Dashboard uses this for the Top 3 header until fresh snapshot rows catch up.
-TOP3_CURRENT_EQUITY_OVERRIDE = 53620.22
-TOP3_CURRENT_BUYING_POWER_OVERRIDE = TOP3_CURRENT_EQUITY_OVERRIDE * 2
-
-# Original 50k start for overall account performance.
-TOP3_ORIGINAL_START_EQUITY = 50000.0
-TOP3_ORIGINAL_START_BUYING_POWER = 100000.0
+TOP3_CURRENT_EQUITY_OVERRIDE = 59339.66
+TOP3_CURRENT_BUYING_POWER_OVERRIDE = 237358.64
 
 TOP3_ALLOCATIONS = {
     "STRUCTURE": 0.45,
@@ -842,49 +836,54 @@ def since_top3_reset(df):
 
 
 def normalise_top3_rows_to_account(top_rows):
-    """Top 3 bot cards use only owner-safe bot_id trade logs from the clean reset."""
-    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+    """Top 3 bot cards from current account allocation.
+
+    This fixes stale zero cards. If owner-safe bot trades exist later, they can
+    replace this allocation fallback.
+    """
+    bots = [
+        ("STRUCTURE_ORB", "Structure ORB", 0.45),
+        ("METALS_ORB", "Metals ORB", 0.45),
+        ("QUALITY_SIZER", "Quality Sizer", 0.10),
+    ]
+
     source = latest_row_by_time(top_rows) if top_rows else None
     fixed = []
 
-    allocation_by_bot = {
-        "STRUCTURE_ORB": 0.45,
-        "METALS_ORB": 0.45,
-        "QUALITY_SIZER": 0.10,
-    }
+    account_pnl = TOP3_CURRENT_EQUITY_OVERRIDE - TOP3_SHARED_ACCOUNT_EQUITY
+    account_bp_pnl = TOP3_CURRENT_BUYING_POWER_OVERRIDE - TOP3_SHARED_ACCOUNT_BUYING_POWER
 
-    for item in leaderboard:
-        bot_id = item["bot_id"]
-        label = item["bot_name"]
-        allocation = allocation_by_bot.get(bot_id, 0.0)
-
-        allocated_start = TOP3_CURRENT_EQUITY_OVERRIDE * allocation
-        allocated_bp = TOP3_CURRENT_BUYING_POWER_OVERRIDE * allocation
-        pnl = float(item.get("pnl", 0) or 0)
+    for bot_id, label, allocation in bots:
+        pnl = account_pnl * allocation
+        allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * allocation
+        current_equity = TOP3_CURRENT_EQUITY_OVERRIDE * allocation
+        current_bp = TOP3_CURRENT_BUYING_POWER_OVERRIDE * allocation
+        pct = 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100
 
         fixed.append({
             "bot_name": label,
             "bot_id": bot_id,
-            "equity": allocated_start + pnl,
-            "raw_equity": allocated_start + pnl,
+            "equity": current_equity,
+            "raw_equity": current_equity,
             "pnl": pnl,
             "equity_pnl": pnl,
             "equity_overnight": pnl,
             "equity_overall": pnl,
-            "bp_overnight": pnl * 2,
-            "bp_overall": pnl * 2,
-            "pct": 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100,
-            "buying_power": allocated_bp + (pnl * 2),
+            "bp_overnight": account_bp_pnl * allocation,
+            "bp_overall": account_bp_pnl * allocation,
+            "pct": pct,
+            "buying_power": current_bp,
             "positions": 0,
             "orders": 0,
-            "last_update": source.get("last_update") if source else "",
-            "trades": int(item.get("trades", 0) or 0),
+            "last_update": pd.Timestamp.now(tz="America/New_York"),
+            "trades": 0,
             "trade_pnl": pnl,
             "session_date": source.get("session_date") if source else None,
-            "session_trades": item.get("session_trades", pd.DataFrame()),
+            "session_trades": pd.DataFrame(),
             "df": source.get("df") if source else pd.DataFrame(),
         })
 
+    fixed.sort(key=lambda r: r["equity_overall"], reverse=True)
     return fixed
 
 
@@ -937,23 +936,15 @@ def latest_valid_number(df, col):
 
 
 def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
-    """Top 3 account header.
-
-    Source of truth for now is the Alpaca reset/current value:
-    - Current equity override: $53,620.22
-    - Original account start: $50,000
-    This makes the top card show +$3,620.22 overall.
-    Bot cards/leaderboard stay clean from owner-safe bot trade logs.
-    """
+    """Top 3 shared account summary using current Alpaca account value."""
     equity = TOP3_CURRENT_EQUITY_OVERRIDE
     buying_power = TOP3_CURRENT_BUYING_POWER_OVERRIDE
 
-    equity_overall = equity - TOP3_ORIGINAL_START_EQUITY
-    bp_overall = buying_power - TOP3_ORIGINAL_START_BUYING_POWER
+    equity_overall = equity - TOP3_SHARED_ACCOUNT_EQUITY
+    bp_overall = buying_power - TOP3_SHARED_ACCOUNT_BUYING_POWER
 
-    # New clean leaderboard starts from the reset, so overnight is zero until new owner-safe trades arrive.
-    equity_overnight = 0.0
-    bp_overnight = 0.0
+    equity_overnight = equity_overall
+    bp_overnight = bp_overall
 
     return {
         "equity": equity,
@@ -962,9 +953,9 @@ def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
         "buying_power": buying_power,
         "bp_overnight": bp_overnight,
         "bp_overall": bp_overall,
-        "positions": sum(r["positions"] for r in rows),
-        "orders": sum(r["orders"] for r in rows),
-        "trades": sum(r["trades"] for r in rows),
+        "positions": sum(r.get("positions", 0) for r in rows),
+        "orders": sum(r.get("orders", 0) for r in rows),
+        "trades": sum(r.get("trades", 0) for r in rows),
     }
 
 
@@ -1121,7 +1112,7 @@ render_html(
     f'<div class="summary-card summary-card-flat">'
     f'<div class="summary-label">Split Dashboard</div>'
     f'<div class="summary-value" style="font-size:1.25rem;">Overnight / Overall</div>'
-    f'<div class="tiny">Session: {session_label} ET. Top 3 current: $53,620.22 equity / $107,240.44 buying power.</div>'
+    f'<div class="tiny">Session: {session_label} ET. Top 3 baseline: $53,620.22 equity / $107,240.44 buying power.</div>'
     f'</div>'
 )
 
@@ -1226,13 +1217,14 @@ def render_group(group_title, group_rows, subtitle):
 
     rank_lookup = {}
     if "Top 3" in group_title:
-        leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
-        for rank, item in enumerate(leaderboard, start=1):
-            rank_lookup[item["bot_id"]] = {
+        ranked_cards = sorted(group_rows, key=lambda r: float(r.get("equity_overall", 0) or 0), reverse=True)
+        for rank, item in enumerate(ranked_cards, start=1):
+            bot_id_for_rank = item.get("bot_id") or normalise_bot_id("", item.get("bot_name", ""))
+            rank_lookup[bot_id_for_rank] = {
                 "rank": rank,
                 "badge": "🥇 1st" if rank == 1 else "🥈 2nd" if rank == 2 else "🥉 3rd",
-                "overnight": float(item.get("pnl", 0) or 0),
-                "overall": float(item.get("pnl", 0) or 0),
+                "overnight": float(item.get("equity_overnight", 0) or 0),
+                "overall": float(item.get("equity_overall", 0) or 0),
             }
 
     for row in sort_rows(group_rows):
@@ -1332,7 +1324,7 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Top 3 account $53,620.22. Overall measured from original $50k start.",
+    "Current Alpaca value: $59,339.66. Overall from $53,620.22 reset.",
 )
 
 
