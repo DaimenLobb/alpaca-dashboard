@@ -22,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
+st.html("""
 <style>
     .stApp {
         background: #101820;
@@ -377,7 +377,7 @@ st.markdown("""
     }
 
 </style>
-""", unsafe_allow_html=True)
+""")
 
 st.title("Alpaca Bot Sleep Check")
 st.caption("Top 3 running leaderboard starts from the $53,620.22 account reset.")
@@ -615,7 +615,30 @@ def pnl_class(pnl):
 
 
 def render_html(html):
-    st.markdown(html, unsafe_allow_html=True)
+    st.html(html)
+
+
+# ============================================================
+# RETIRE / HIDE INACTIVE BOTS
+# ============================================================
+
+RETIRE_AFTER_HOURS = 24
+
+
+def is_retired_by_last_update(row):
+    """Treat bots as retired if they have not logged to Google Sheets in 24 hours.
+
+    Top 3 shared account cards are kept because those are fixed account slots.
+    Other bots disappear automatically once stale.
+    """
+    try:
+        last = pd.Timestamp(row.get("last_update"))
+        if last.tzinfo is None:
+            last = last.tz_localize("America/New_York")
+        now = pd.Timestamp.now(tz="America/New_York")
+        return (now - last).total_seconds() > RETIRE_AFTER_HOURS * 3600
+    except Exception:
+        return True
 
 
 # ============================================================
@@ -623,10 +646,7 @@ def render_html(html):
 # ============================================================
 
 TOP3_SHARED_ACCOUNT_EQUITY = 53620.22
-TOP3_SHARED_ACCOUNT_BUYING_POWER = 214480.88
-
-TOP3_CURRENT_EQUITY_OVERRIDE = 59339.66
-TOP3_CURRENT_BUYING_POWER_OVERRIDE = 237358.64
+TOP3_SHARED_ACCOUNT_BUYING_POWER = 107240.44
 
 TOP3_ALLOCATIONS = {
     "STRUCTURE": 0.45,
@@ -836,54 +856,93 @@ def since_top3_reset(df):
 
 
 def normalise_top3_rows_to_account(top_rows):
-    """Top 3 bot cards from current account allocation.
+    """Top 3 bot cards use bot_id trade logs.
 
-    This fixes stale zero cards. If owner-safe bot trades exist later, they can
-    replace this allocation fallback.
+    Header remains actual shared-account equity.
+    Bot cards show logged trade P&L by bot_id.
+    Any gap between account P&L and logged trade P&L becomes Unallocated.
     """
-    bots = [
-        ("STRUCTURE_ORB", "Structure ORB", 0.45),
-        ("METALS_ORB", "Metals ORB", 0.45),
-        ("QUALITY_SIZER", "Quality Sizer", 0.10),
-    ]
+    leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+
+    row_lookup = {}
+    for r in top_rows:
+        row_lookup[normalise_bot_id("", r.get("bot_name"))] = r
 
     source = latest_row_by_time(top_rows) if top_rows else None
     fixed = []
 
-    account_pnl = TOP3_CURRENT_EQUITY_OVERRIDE - TOP3_SHARED_ACCOUNT_EQUITY
-    account_bp_pnl = TOP3_CURRENT_BUYING_POWER_OVERRIDE - TOP3_SHARED_ACCOUNT_BUYING_POWER
+    for item in leaderboard:
+        bot_id = item["bot_id"]
+        label = item["bot_name"]
+        base_row = row_lookup.get(bot_id)
 
-    for bot_id, label, allocation in bots:
-        pnl = account_pnl * allocation
-        allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * allocation
-        current_equity = TOP3_CURRENT_EQUITY_OVERRIDE * allocation
-        current_bp = TOP3_CURRENT_BUYING_POWER_OVERRIDE * allocation
-        pct = 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100
+        if base_row is None:
+            if bot_id == "QUALITY_SIZER":
+                allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.10
+            else:
+                allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
 
-        fixed.append({
-            "bot_name": label,
-            "bot_id": bot_id,
-            "equity": current_equity,
-            "raw_equity": current_equity,
-            "pnl": pnl,
-            "equity_pnl": pnl,
-            "equity_overnight": pnl,
-            "equity_overall": pnl,
-            "bp_overnight": account_bp_pnl * allocation,
-            "bp_overall": account_bp_pnl * allocation,
-            "pct": pct,
-            "buying_power": current_bp,
-            "positions": 0,
-            "orders": 0,
-            "last_update": pd.Timestamp.now(tz="America/New_York"),
-            "trades": 0,
-            "trade_pnl": pnl,
-            "session_date": source.get("session_date") if source else None,
-            "session_trades": pd.DataFrame(),
-            "df": source.get("df") if source else pd.DataFrame(),
-        })
+            base_row = {
+                "bot_name": label,
+                "equity": allocated_start,
+                "raw_equity": allocated_start,
+                "pnl": 0.0,
+                "equity_pnl": 0.0,
+                "equity_overnight": 0.0,
+                "equity_overall": 0.0,
+                "bp_overnight": 0.0,
+                "bp_overall": 0.0,
+                "pct": 0.0,
+                "buying_power": allocated_start * 2,
+                "positions": 0,
+                "orders": 0,
+                "last_update": source.get("last_update") if source else "",
+                "trades": 0,
+                "trade_pnl": 0.0,
+                "session_date": source.get("session_date") if source else None,
+                "session_trades": pd.DataFrame(),
+                "df": source.get("df") if source else pd.DataFrame(),
+            }
 
-    fixed.sort(key=lambda r: r["equity_overall"], reverse=True)
+        new_row = base_row.copy()
+
+        if bot_id == "QUALITY_SIZER":
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.10
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.10
+        elif bot_id == "METALS_ORB":
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.45
+        else:
+            allocated_start = TOP3_SHARED_ACCOUNT_EQUITY * 0.45
+            allocated_bp = TOP3_SHARED_ACCOUNT_BUYING_POWER * 0.45
+
+        pnl = float(item["pnl"] or 0)
+        new_row["bot_name"] = label
+        new_row["bot_id"] = bot_id
+        new_row["pnl"] = pnl
+        new_row["equity_overnight"] = pnl
+        new_row["equity_overall"] = pnl
+        new_row["bp_overnight"] = pnl * 2
+        new_row["bp_overall"] = pnl * 2
+        new_row["equity"] = allocated_start + pnl
+        new_row["buying_power"] = allocated_bp + (pnl * 2)
+        new_row["pct"] = 0.0 if allocated_start == 0 else (pnl / allocated_start) * 100
+        new_row["trades"] = int(item["trades"])
+        new_row["trade_pnl"] = pnl
+        new_row["session_trades"] = item["session_trades"]
+
+        fixed.append(new_row)
+
+    account_summary = account_equity_summary_from_rows(
+        top_rows,
+        TOP3_SHARED_ACCOUNT_EQUITY,
+        TOP3_SHARED_ACCOUNT_BUYING_POWER,
+    )
+    account_overall = float(account_summary.get("equity_overall", 0) or 0)
+    logged_total = sum(float(r.get("equity_overall", 0) or 0) for r in fixed)
+    unallocated = account_overall - logged_total
+
+    # Do not create an Unallocated card for pre-owner-safe historical rows.
     return fixed
 
 
@@ -936,15 +995,91 @@ def latest_valid_number(df, col):
 
 
 def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
-    """Top 3 shared account summary using current Alpaca account value."""
-    equity = TOP3_CURRENT_EQUITY_OVERRIDE
-    buying_power = TOP3_CURRENT_BUYING_POWER_OVERRIDE
+    """Top 3 account summary from allocation slices.
 
-    equity_overall = equity - TOP3_SHARED_ACCOUNT_EQUITY
-    bp_overall = buying_power - TOP3_SHARED_ACCOUNT_BUYING_POWER
+    The shared account logs as three allocation slices:
+    - Structure 45%
+    - Metals 45%
+    - Quality 10%
 
-    equity_overnight = equity_overall
-    bp_overnight = bp_overall
+    So the account total must be the latest row from each bucket added together.
+    Do NOT take only the newest row, because that gives just one slice.
+    """
+    by_bucket = {}
+
+    for row in rows:
+        bucket = top3_bucket(row.get("bot_name"))
+        if bucket is None:
+            continue
+
+        existing = by_bucket.get(bucket)
+
+        if existing is None:
+            by_bucket[bucket] = row
+            continue
+
+        try:
+            current_ts = pd.Timestamp(row.get("last_update"))
+            existing_ts = pd.Timestamp(existing.get("last_update"))
+            if current_ts > existing_ts:
+                by_bucket[bucket] = row
+        except Exception:
+            by_bucket[bucket] = row
+
+    equity = 0.0
+    equity_overnight = 0.0
+    equity_overall = 0.0
+    buying_power = 0.0
+    bp_overnight = 0.0
+    bp_overall = 0.0
+
+    # Always include all three buckets. If one missed logging, carry its baseline
+    # rather than collapsing the whole account total.
+    for bucket, allocation in TOP3_ALLOCATIONS.items():
+        baseline_equity = equity_baseline * allocation
+        baseline_bp = bp_baseline * allocation
+        row = by_bucket.get(bucket)
+
+        if row is None:
+            equity += baseline_equity
+            buying_power += baseline_bp
+            continue
+
+        row_equity = float(row.get("raw_equity", row.get("equity", baseline_equity)) or baseline_equity)
+
+        df = row.get("df")
+        row_bp = latest_valid_number(df, "buying_power") if df is not None else float(row.get("buying_power", baseline_bp) or baseline_bp)
+        if not row_bp:
+            row_bp = float(row.get("buying_power", baseline_bp) or baseline_bp)
+
+        session_date = row.get("session_date")
+        sdf = session_slice(df, session_date) if df is not None and session_date is not None else pd.DataFrame()
+
+        if sdf is not None and not sdf.empty:
+            start_equity = float(sdf.iloc[0].get("equity", row_equity) or row_equity)
+            start_bp = float(sdf.iloc[0].get("buying_power", row_bp) or row_bp)
+        else:
+            start_equity = row_equity
+            start_bp = row_bp
+
+        equity += row_equity
+        equity_overnight += row_equity - start_equity
+        equity_overall += row_equity - baseline_equity
+
+        buying_power += row_bp
+        bp_overnight += row_bp - start_bp
+        bp_overall += row_bp - baseline_bp
+
+    # Shared margin account: display buying power from account equity.
+    # This keeps the header at about $101,316 when equity is $50,658,
+    # instead of double-counting allocation slices.
+    buying_power = equity * 2
+    bp_overnight = equity_overnight * 2
+    bp_overall = equity_overall * 2
+
+    buying_power = equity * 2
+    bp_overnight = equity_overnight * 2
+    bp_overall = equity_overall * 2
 
     return {
         "equity": equity,
@@ -953,9 +1088,9 @@ def account_equity_summary_from_rows(rows, equity_baseline, bp_baseline):
         "buying_power": buying_power,
         "bp_overnight": bp_overnight,
         "bp_overall": bp_overall,
-        "positions": sum(r.get("positions", 0) for r in rows),
-        "orders": sum(r.get("orders", 0) for r in rows),
-        "trades": sum(r.get("trades", 0) for r in rows),
+        "positions": sum(r["positions"] for r in rows),
+        "orders": sum(r["orders"] for r in rows),
+        "trades": sum(r["trades"] for r in rows),
     }
 
 
@@ -1217,14 +1352,13 @@ def render_group(group_title, group_rows, subtitle):
 
     rank_lookup = {}
     if "Top 3" in group_title:
-        ranked_cards = sorted(group_rows, key=lambda r: float(r.get("equity_overall", 0) or 0), reverse=True)
-        for rank, item in enumerate(ranked_cards, start=1):
-            bot_id_for_rank = item.get("bot_id") or normalise_bot_id("", item.get("bot_name", ""))
-            rank_lookup[bot_id_for_rank] = {
+        leaderboard, _ = top3_leaderboard_from_trades(trades_by_tab)
+        for rank, item in enumerate(leaderboard, start=1):
+            rank_lookup[item["bot_id"]] = {
                 "rank": rank,
                 "badge": "🥇 1st" if rank == 1 else "🥈 2nd" if rank == 2 else "🥉 3rd",
-                "overnight": float(item.get("equity_overnight", 0) or 0),
-                "overall": float(item.get("equity_overall", 0) or 0),
+                "overnight": float(item.get("pnl", 0) or 0),
+                "overall": float(item.get("pnl", 0) or 0),
             }
 
     for row in sort_rows(group_rows):
@@ -1317,6 +1451,14 @@ def render_group(group_title, group_rows, subtitle):
 
 
 valid_rows = [r for r in valid_rows if not is_excluded_bot(r["bot_name"])]
+
+# Auto-retire non-Top-3 bots that have not logged in 24 hours.
+# Top 3 stays visible as fixed allocation slots.
+valid_rows = [
+    r for r in valid_rows
+    if is_top_account_bot(r["bot_name"]) or not is_retired_by_last_update(r)
+]
+
 top_rows_raw = [r for r in valid_rows if is_top_account_bot(r["bot_name"])]
 top_rows = normalise_top3_rows_to_account(top_rows_raw)
 other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
@@ -1324,14 +1466,14 @@ other_rows = [r for r in valid_rows if not is_top_account_bot(r["bot_name"])]
 render_group(
     "Top 3 Shared Trading Account",
     top_rows,
-    "Current Alpaca value: $59,339.66. Overall from $53,620.22 reset.",
+    "Clean reset from $53,620.22. Owner-safe bot_id trade logs only.",
 )
 
 
 render_group(
     "Other Bot Accounts",
     other_rows,
-    "Separate total for all remaining bot accounts.",
+    "Active bots only. Bots with no Google Sheets log for 24h are treated as retired.",
 )
 
 st.caption("Sleep-check layout. Refreshes every 30 seconds.")
