@@ -24,9 +24,9 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 .summary-card { border-radius: 20px; border: 1px solid rgba(255,255,255,0.18); background: linear-gradient(145deg, rgba(255,255,255,0.16), rgba(255,255,255,0.08)); padding: 14px; margin-bottom: 12px; box-shadow: 0 10px 28px rgba(0,0,0,0.35); }
 .summary-label { color: #d6e2ea; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; margin-bottom: 3px; }
 .summary-value { color: white; font-size: 2rem; font-weight: 900; line-height: 2.15rem; }
-.summary-pnl-positive, .bot-pnl-positive { color: #00e676; }
-.summary-pnl-negative, .bot-pnl-negative { color: #ff5252; }
-.summary-pnl-flat, .bot-pnl-flat { color: #cfd8dc; }
+.summary-pnl-positive, .bot-pnl-positive, .since-positive { color: #00e676; }
+.summary-pnl-negative, .bot-pnl-negative, .since-negative { color: #ff5252; }
+.summary-pnl-flat, .bot-pnl-flat, .since-flat { color: #cfd8dc; }
 .summary-pnl-positive, .summary-pnl-negative, .summary-pnl-flat { font-weight: 900; font-size: 1rem; margin-top: 3px; }
 .bot-row { border-radius: 18px; border: 1px solid rgba(255,255,255,0.16); padding: 12px 13px; margin-bottom: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); }
 .bot-row-positive { background: linear-gradient(90deg, rgba(0,200,83,0.28), rgba(0,200,83,0.09)); border-left: 7px solid #00e676; }
@@ -38,6 +38,7 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 .child-name { font-size: 0.86rem; }
 .bot-pnl-positive, .bot-pnl-negative, .bot-pnl-flat { font-size: 1.15rem; font-weight: 900; white-space: nowrap; }
 .bot-subline { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: #d6e2ea; font-size: 0.76rem; font-weight: 700; flex-wrap: wrap; }
+.since-line { margin-top: 6px; font-size: 0.76rem; font-weight: 900; }
 .tiny { color: #90a4ae; font-size: 0.68rem; margin-top: 5px; }
 .section-title { color: #f5f7fa; font-size: 0.9rem; font-weight: 900; text-transform: uppercase; margin: 16px 0 8px 0; letter-spacing: 0.04em; }
 div[data-testid="stExpander"] { border: 0 !important; background: transparent !important; }
@@ -57,29 +58,36 @@ BOT_SHEETS = [
         "name": "Fusion Portfolio",
         "spreadsheet_id": "1fRCRhiJ_5eNwJCBRW9EXwZRW4Gu6WkEXld_a760EiPY",
         "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
     },
     {
         "name": "Fusion 15",
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
     },
     {
         "name": "Fusion Smart SL",
         "spreadsheet_id": "1AD9Zkr1DRBUl74JbMxdQDbtdeVqV97s-3qac-hiddjo",
         "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
     },
     {
         "name": "Fusion Half Runner",
         "spreadsheet_id": "18OiMDUaOWyF0LhHdmVrJUCUhsQU2bT7o0ArDWaCmLjs",
         "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
     },
     {
         "name": "Apex 50K 3-Bot Portfolio",
         "spreadsheet_id": "1pgYoFqiWDGLXh-GYCkFQ76oxT8v-kSQJ9EpSJkEAuHk",
         "type": "group",
+        "start_equity": DEFAULT_START_EQUITY,
         "children": ["METALS ORB", "STRUCTURE HUNTER ORB", "QUALITY SIZER"],
     },
 ]
+
+DEFAULT_START_EQUITY = 50000.0
 
 NUMERIC_COLUMNS = [
     "equity", "buying_power", "open_positions", "open_orders", "qty",
@@ -188,6 +196,14 @@ def pnl_class(pnl):
     return "flat"
 
 
+def since_start_values(row):
+    start = float(row.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY)
+    equity = float(row.get("equity", 0) or 0)
+    gain = equity - start
+    pct = 0.0 if start == 0 else (gain / start) * 100
+    return start, gain, pct
+
+
 def safe_int(value):
     try:
         return int(float(value or 0))
@@ -213,7 +229,7 @@ def trade_count(trades, tab_name):
     return len(df)
 
 
-def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False):
+def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY):
     equity, pnl, pct = calc_delta(df)
     latest = df.iloc[-1]
     return {
@@ -228,6 +244,7 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False):
         "last_update": latest.get("timestamp", ""),
         "trades": trade_count(trades, tab_name),
         "detail_only": detail_only,
+        "start_equity": float(start_equity or DEFAULT_START_EQUITY),
     }
 
 
@@ -235,7 +252,7 @@ def make_single_row(config, snapshots, trades):
     tab_name, df = best_snapshot_for_name(snapshots, config["name"])
     if df is None or df.empty:
         return None
-    return row_from_snapshot(config["name"], tab_name, df, trades)
+    return row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
 
 
 def make_group_row(config, snapshots, trades):
@@ -246,12 +263,12 @@ def make_group_row(config, snapshots, trades):
         tab_name, df = best_snapshot_for_name({k: v for k, v in snapshots.items() if k not in used_tabs}, child_name)
         if df is not None and not df.empty:
             used_tabs.add(tab_name)
-            children.append(row_from_snapshot(child_name, tab_name, df, trades, detail_only=True))
+            children.append(row_from_snapshot(child_name, tab_name, df, trades, detail_only=True, start_equity=DEFAULT_START_EQUITY))
 
     # If the sheet has extra snapshot tabs, show them as detail too.
     for tab_name, df in snapshots.items():
         if tab_name not in used_tabs:
-            children.append(row_from_snapshot(tab_name, tab_name, df, trades, detail_only=True))
+            children.append(row_from_snapshot(tab_name, tab_name, df, trades, detail_only=True, start_equity=DEFAULT_START_EQUITY))
 
     if not children:
         return None, []
@@ -263,6 +280,7 @@ def make_group_row(config, snapshots, trades):
     parent["bot_name"] = config["name"]
     parent["tab_name"] = "account-level from newest child snapshot"
     parent["detail_only"] = False
+    parent["start_equity"] = float(config.get("start_equity", DEFAULT_START_EQUITY))
 
     # Positions/orders are account-level fields in each child log. Use max, not sum.
     parent["positions"] = max((c["positions"] for c in children), default=0)
@@ -273,6 +291,8 @@ def make_group_row(config, snapshots, trades):
 
 def render_row(row, child=False):
     cls = pnl_class(row["pnl"])
+    start, since_gain, since_pct = since_start_values(row)
+    since_cls = pnl_class(since_gain)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -281,9 +301,10 @@ def render_row(row, child=False):
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
                 <div class="{name_class}">{row["bot_name"]}</div>
-                <div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>
+                <div class="bot-pnl-{cls}">Today {row["pnl"]:+,.0f}</div>
             </div>
-            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div>
+            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pct"]:+.2f}%</span></div>
+            <div class="since-line since-{since_cls}">Since {money(start)}: {since_gain:+,.0f} ({since_pct:+.2f}%)</div>
             <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
             <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}</div>
         </div>''',
@@ -325,10 +346,14 @@ total_bp = sum(r["buying_power"] for r in fleet_rows)
 total_pnl = sum(r["pnl"] for r in fleet_rows)
 total_positions = sum(r["positions"] for r in fleet_rows)
 total_orders = sum(r["orders"] for r in fleet_rows)
+total_start = sum(float(r.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY) for r in fleet_rows)
+total_since = total_equity - total_start
+total_since_pct = 0.0 if total_start == 0 else (total_since / total_start) * 100
 cls = pnl_class(total_pnl)
+since_cls = pnl_class(total_since)
 
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">{total_pnl:+,.0f}</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Since {money(total_start)}: {total_since:+,.0f} ({total_since_pct:+.2f}%)</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -355,4 +380,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Apex 50K child bot equity is shown for tracking only, so it is not double-counted in the fleet total.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; since-start tracking uses a $50,000 baseline per account/bot. Apex child equity is tracking-only and not double-counted.")
