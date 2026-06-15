@@ -609,6 +609,9 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
     previous_equity = equity - pnl
     latest = df.iloc[-1]
     actual_bot_id = bot_id or str(latest.get("bot_id", "") or "")
+    actual_bot_id = "" if str(actual_bot_id).strip().lower() in ("", "nan", "none") else str(actual_bot_id).strip()
+    # If a bot_id exists, use it. If not, use all trade rows in this bot's own spreadsheet.
+    # This restores single-bot trade history where the trade tab does not carry a bot_id column.
     trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_id=actual_bot_id or None)
     trade_day = ""
     if trade_rows is not None and not trade_rows.empty and "trade_day_et" in trade_rows.columns:
@@ -819,22 +822,24 @@ fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0)
 for rank, row in enumerate(fleet_rows, start=1):
     render_row(row, rank=rank)
     children = group_children.get(row["bot_name"], [])
-    if int(row.get("trades", 0) or 0) > 0:
-        with st.expander(f"Tap card trades: {row['bot_name']} ({row['trades']})", expanded=False):
-            render_trade_details(row, key_prefix=f"main-{rank}")
+    # Phone-friendly: no checkboxes. Tap the expander bar directly under each card
+    # to reveal that bot's trades underneath the card. It is shown even when the
+    # count is zero so you can confirm there were no matching trades.
+    with st.expander(f"👆 Tap to show trades for {row['bot_name']} ({row['trades']})", expanded=False):
+        render_trade_details(row, key_prefix=f"main-{rank}")
+
     if children:
         children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
             st.caption("Apex child cards are ranked separately by realised daily/session P/L. They are tracking only and are not added into Total Fleet Equity.")
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
-                if int(child.get("trades", 0) or 0) > 0:
-                    if st.checkbox(f"Tap to show trades for {child['bot_name']} ({child['trades']})", key=f"apex_child_trades_{child_rank}_{child.get('bot_id','')}"):
-                        render_trade_details(child, key_prefix=f"child-{child_rank}")
+                with st.expander(f"👆 Tap to show trades for {child['bot_name']} ({child['trades']})", expanded=False):
+                    render_trade_details(child, key_prefix=f"child-{child_rank}")
 
 if load_errors:
     with st.expander("Load warnings", expanded=False):
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by realised trade P/L when trade tabs have entries; otherwise by the saved leaderboard baseline. Click a bot's trade expander to see the logged trades underneath.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by realised trade P/L when trade tabs have entries; otherwise by the saved leaderboard baseline. Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
