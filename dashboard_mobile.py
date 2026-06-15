@@ -345,19 +345,30 @@ def make_group_row(config, snapshots, trades):
     if not children:
         return None, []
 
-    # Parent account card: use the newest child snapshot for account equity/BP.
-    # This avoids triple-counting one Alpaca account when 3 bots log the same account sheet.
-    parent_source = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
-    parent = dict(parent_source)
-    parent["bot_name"] = config["name"]
-    parent["tab_name"] = "account-level from newest child snapshot"
-    parent["detail_only"] = False
-    parent["start_equity"] = float(config.get("start_equity", DEFAULT_START_EQUITY))
+    # Parent account card: Apex 50K is one Alpaca account split by allocation.
+    # The child rows show allocated equity, so the parent account equity is the
+    # sum of those allocated equities, not the newest child row.
+    latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
+    parent_equity = sum(float(c.get("equity", 0) or 0) for c in children)
+    parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
+    parent_pnl = sum(float(c.get("pnl", 0) or 0) for c in children)
+    previous_equity = parent_equity - parent_pnl
+    parent_pct = 0.0 if previous_equity == 0 else (parent_pnl / previous_equity) * 100
 
-    # Positions/orders are account-level fields in each child log. Use max, not sum.
-    parent["positions"] = max((c["positions"] for c in children), default=0)
-    parent["orders"] = max((c["orders"] for c in children), default=0)
-    parent["trades"] = sum(c["trades"] for c in children)
+    parent = {
+        "bot_name": config["name"],
+        "tab_name": "account total from summed strategy allocations",
+        "equity": parent_equity,
+        "pnl": parent_pnl,
+        "pct": parent_pct,
+        "buying_power": parent_bp,
+        "positions": max((c["positions"] for c in children), default=0),
+        "orders": max((c["orders"] for c in children), default=0),
+        "last_update": latest_child.get("last_update", ""),
+        "trades": sum(c["trades"] for c in children),
+        "detail_only": False,
+        "start_equity": float(config.get("start_equity", DEFAULT_START_EQUITY)),
+    }
     return parent, children
 
 
@@ -452,4 +463,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K child baselines use their strategy allocations: Metals $22.5k, Structure $17.5k, Quality $10k. Apex child equity is tracking-only and not double-counted.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the summed account total from its strategy allocations; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
