@@ -35,6 +35,7 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 .child-row { margin-left: 8px; border-left-width: 4px; padding: 10px 11px; opacity: 0.96; }
 .bot-topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .bot-name { color: white; font-size: 0.95rem; font-weight: 900; line-height: 1.15rem; }
+.rank-badge { display: inline-block; margin-right: 7px; font-weight: 900; color: #ffd54f; }
 .child-name { font-size: 0.86rem; }
 .bot-pnl-positive, .bot-pnl-negative, .bot-pnl-flat { font-size: 1.15rem; font-weight: 900; white-space: nowrap; }
 .bot-subline { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: #d6e2ea; font-size: 0.76rem; font-weight: 700; flex-wrap: wrap; }
@@ -490,7 +491,17 @@ def make_group_row(config, snapshots, trades):
     }
     return parent, children
 
-def render_row(row, child=False):
+def rank_badge(rank):
+    if rank == 1:
+        return "🥇"
+    if rank == 2:
+        return "🥈"
+    if rank == 3:
+        return "🥉"
+    return f"#{rank}"
+
+
+def render_row(row, child=False, rank=None):
     cls = pnl_class(row["pnl"])
     start, since_gain, since_pct = since_start_values(row)
     since_cls = pnl_class(since_gain)
@@ -500,10 +511,11 @@ def render_row(row, child=False):
     source_label = "Apex bot source" if child else "Source"
     allocation_text = f"<span>Allocation {row.get('allocation')}</span>" if child and row.get("allocation") else ""
     bot_id_text = f" | bot_id: {row.get('bot_id')}" if child and row.get("bot_id") else ""
+    badge_html = f'<span class="rank-badge">{rank_badge(rank)}</span>' if rank else ""
     st.markdown(
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
-                <div class="{name_class}">{row["bot_name"]}</div>
+                <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
                 <div class="bot-pnl-{cls}">Today {row["pnl"]:+,.0f}</div>
             </div>
             <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pct"]:+.2f}%</span>{allocation_text}</div>
@@ -566,21 +578,24 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — ranked by Today P/L</div>', unsafe_allow_html=True)
 
-# Keep user's preferred order from BOT_SHEETS.
-for row in fleet_rows:
-    render_row(row)
+# Leaderboard cards: best Today P/L at the top.
+fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
+
+for rank, row in enumerate(fleet_rows, start=1):
+    render_row(row, rank=rank)
     children = group_children.get(row["bot_name"], [])
     if children:
+        children = sorted(children, key=lambda r: (float(r.get("pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
-            st.caption("These three equity rows are shown for tracking only and are not added into Total Fleet Equity.")
-            for child in children:
-                render_row(child, child=True)
+            st.caption("Apex child cards are ranked separately by Today P/L. They are tracking only and are not added into Total Fleet Equity.")
+            for child_rank, child in enumerate(children, start=1):
+                render_row(child, child=True, rank=child_rank)
 
 if load_errors:
     with st.expander("Load warnings", expanded=False):
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the account total inferred from exact bot_id allocation rows; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by Today P/L; Apex 50K parent is ranked in the main list and Apex child cards are ranked separately inside the detail section.")
