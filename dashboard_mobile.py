@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -384,6 +385,68 @@ def fmt_time(value):
         return str(value)
 
 
+
+
+BASELINE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sleep_check_leaderboard_baselines.json")
+
+
+def baseline_key(row):
+    key = str(row.get("bot_id") or row.get("bot_name") or "").strip()
+    return key or str(row.get("bot_name", ""))
+
+
+def load_baselines():
+    try:
+        if os.path.exists(BASELINE_FILE):
+            with open(BASELINE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {"created_at": datetime.now().isoformat(), "baselines": {}}
+
+
+def save_baselines(data):
+    try:
+        tmp = BASELINE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+        os.replace(tmp, BASELINE_FILE)
+    except Exception as e:
+        st.warning(f"Could not save leaderboard baselines: {type(e).__name__}: {e}")
+
+
+def apply_leaderboard_baselines(rows, children_by_group):
+    """Set each bot's leaderboard start value and P/L.
+
+    The old green 'Since allocation' line was not real P/L. This starts the
+    leaderboard from the first run of this version, so current values show 0 and
+    future movement is true P/L per bot/account.
+    """
+    data = load_baselines()
+    baselines = data.setdefault("baselines", {})
+    changed = False
+
+    all_rows = list(rows)
+    for child_list in children_by_group.values():
+        all_rows.extend(child_list)
+
+    for row in all_rows:
+        key = baseline_key(row)
+        if key not in baselines:
+            baselines[key] = float(row.get("equity", 0) or 0)
+            changed = True
+        start = float(baselines.get(key, row.get("equity", 0)) or 0)
+        equity = float(row.get("equity", 0) or 0)
+        row["leaderboard_start"] = start
+        row["leaderboard_pnl"] = equity - start
+        row["leaderboard_pct"] = 0.0 if start == 0 else ((equity - start) / start) * 100
+
+    if changed:
+        save_baselines(data)
+    return data
+
 def trade_count(trades, tab_name, bot_id=None):
     if bot_id:
         return trade_count_for_bot_id(trades, bot_id)
@@ -502,9 +565,11 @@ def rank_badge(rank):
 
 
 def render_row(row, child=False, rank=None):
-    cls = pnl_class(row["pnl"])
-    start, since_gain, since_pct = since_start_values(row)
-    since_cls = pnl_class(since_gain)
+    display_pnl = float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0)
+    cls = pnl_class(display_pnl)
+    lb_start = float(row.get("leaderboard_start", row.get("equity", 0)) or 0)
+    lb_pct = float(row.get("leaderboard_pct", 0) or 0)
+    since_cls = pnl_class(display_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -516,10 +581,10 @@ def render_row(row, child=False, rank=None):
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
                 <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
-                <div class="bot-pnl-{cls}">Today {row["pnl"]:+,.0f}</div>
+                <div class="bot-pnl-{cls}">P/L {display_pnl:+,.0f}</div>
             </div>
-            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pct"]:+.2f}%</span>{allocation_text}</div>
-            <div class="since-line since-{since_cls}">Since {money(start)}: {since_gain:+,.0f} ({since_pct:+.2f}%)</div>
+            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)</span>{allocation_text}</div>
+            <div class="since-line since-{since_cls}">Leaderboard from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
             <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
             <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
         </div>''',
@@ -555,20 +620,23 @@ if not fleet_rows:
         st.error("\n".join(load_errors))
     st.stop()
 
+baseline_data = apply_leaderboard_baselines(fleet_rows, group_children)
+
 # Grand total uses parent account rows only. Apex child rows stay detail-only.
 total_equity = sum(r["equity"] for r in fleet_rows)
 total_bp = sum(r["buying_power"] for r in fleet_rows)
-total_pnl = sum(r["pnl"] for r in fleet_rows)
+total_pnl = sum(float(r.get("leaderboard_pnl", r.get("pnl", 0)) or 0) for r in fleet_rows)
+total_daily_pnl = sum(r["pnl"] for r in fleet_rows)
 total_positions = sum(r["positions"] for r in fleet_rows)
 total_orders = sum(r["orders"] for r in fleet_rows)
 total_start = sum(float(r.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY) for r in fleet_rows)
 total_since = total_equity - total_start
 total_since_pct = 0.0 if total_start == 0 else (total_since / total_start) * 100
 cls = pnl_class(total_pnl)
-since_cls = pnl_class(total_since)
+since_cls = pnl_class(total_pnl)
 
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Since {money(total_start)}: {total_since:+,.0f} ({total_since_pct:+.2f}%)</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Leaderboard P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Daily total {total_daily_pnl:+,.0f} | Baseline file: {os.path.basename(BASELINE_FILE)}</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -578,18 +646,18 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots — ranked by Today P/L</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — ranked by leaderboard P/L</div>', unsafe_allow_html=True)
 
 # Leaderboard cards: best Today P/L at the top.
-fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
+fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
 
 for rank, row in enumerate(fleet_rows, start=1):
     render_row(row, rank=rank)
     children = group_children.get(row["bot_name"], [])
     if children:
-        children = sorted(children, key=lambda r: (float(r.get("pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
+        children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
-            st.caption("Apex child cards are ranked separately by Today P/L. They are tracking only and are not added into Total Fleet Equity.")
+            st.caption("Apex child cards are ranked separately by leaderboard P/L. They are tracking only and are not added into Total Fleet Equity.")
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
 
@@ -598,4 +666,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by Today P/L; Apex 50K parent is ranked in the main list and Apex child cards are ranked separately inside the detail section.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by leaderboard P/L; Apex 50K parent is ranked in the main list and Apex child cards are ranked separately inside the detail section.")
