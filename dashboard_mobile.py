@@ -321,9 +321,10 @@ def trade_table_html(df):
     rename = {
         "time_et": "Time ET", "symbol": "Symbol", "side": "Side", "qty": "Qty",
         "entry_price": "Entry", "exit_price": "Exit", "pnl": "P/L", "pnl_pct": "%",
-        "exit_reason": "Exit", "status": "Status",
+        "exit_reason": "Reason", "status": "Status",
     }
     view = view.rename(columns=rename)
+    view = view.loc[:, ~view.columns.duplicated()].copy()
     for col in ["Entry", "Exit"]:
         if col in view.columns:
             view[col] = pd.to_numeric(view[col], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:.2f}")
