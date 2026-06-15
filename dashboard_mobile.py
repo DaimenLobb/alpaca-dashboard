@@ -49,6 +49,12 @@ div[data-testid="stExpander"] summary { color: #f5f7fa !important; font-weight: 
 .trade-table { width: 100%; border-collapse: collapse; margin: 8px 0 14px 0; font-size: 0.72rem; color: #e9f1f5; }
 .trade-table th { color: #d6e2ea; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.18); padding: 5px; }
 .trade-table td { padding: 5px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.trade-card { border-radius: 14px; padding: 10px 11px; margin: 8px 0; border: 1px solid rgba(255,255,255,0.14); }
+.trade-card-positive { background: rgba(0,200,83,0.16); border-left: 5px solid #00e676; }
+.trade-card-negative { background: rgba(255,82,82,0.16); border-left: 5px solid #ff5252; }
+.trade-card-flat { background: rgba(96,125,139,0.16); border-left: 5px solid #b0bec5; }
+.trade-card-top { display: flex; justify-content: space-between; gap: 10px; color: #f5f7fa; font-size: 0.82rem; font-weight: 900; }
+.trade-card-sub { color: #d6e2ea; font-size: 0.70rem; font-weight: 700; margin-top: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,31 +138,60 @@ def clean_dataframe(rows):
     return df
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_spreadsheet(spreadsheet_id):
+    """Load one Google spreadsheet with very few Sheets API read requests.
+
+    The earlier version called worksheet.get_all_records() once per tab. With
+    five bot spreadsheets plus trade tabs, Streamlit refreshes could hit the
+    Google Sheets per-minute quota. This version gets the worksheet list once,
+    then reads all tab values in one batch request per spreadsheet.
+    """
     client = gspread.authorize(get_credentials())
     spreadsheet = client.open_by_key(spreadsheet_id)
+    worksheets = spreadsheet.worksheets()
     snapshots = {}
     trades = {}
 
-    for worksheet in spreadsheet.worksheets():
-        rows = worksheet.get_all_records()
+    if not worksheets:
+        return snapshots, trades
+
+    ranges = [f"'{ws.title.replace(chr(39), chr(39)+chr(39))}'!A:AZ" for ws in worksheets]
+    try:
+        batch = spreadsheet.values_batch_get(ranges=ranges)
+        value_ranges = batch.get("valueRanges", [])
+    except Exception:
+        # Fallback keeps the app usable if the gspread version lacks batch_get,
+        # but the normal path above is what avoids 429 quota errors.
+        value_ranges = []
+        for ws in worksheets:
+            value_ranges.append({"values": ws.get_all_values()})
+
+    for ws, vr in zip(worksheets, value_ranges):
+        values = vr.get("values", [])
+        if not values or len(values) < 2:
+            continue
+        headers = [str(h).strip() for h in values[0]]
+        rows = []
+        for raw in values[1:]:
+            padded = list(raw) + [""] * max(0, len(headers) - len(raw))
+            row = dict(zip(headers, padded[:len(headers)]))
+            if any(str(v).strip() for v in row.values()):
+                rows.append(row)
         if not rows:
             continue
+
         df = clean_dataframe(rows)
         if df.empty:
             continue
 
-        title = worksheet.title.strip()
+        title = ws.title.strip()
         title_lower = title.lower()
-        # Trade tabs can be named "BOT Trades" or "BOT Trades (Legacy)".
-        # Anything with "trade" in the title is treated as a trade log.
         if "trade" in title_lower:
             clean_title = title.replace("(Legacy)", "").replace("Trades", "").replace("trades", "").strip()
             trades[clean_title] = df
             continue
 
-        # Snapshot tabs need equity. Ignore helper/config tabs that do not look like account snapshots.
         if "equity" not in df.columns:
             continue
         df = df[df["equity"].fillna(0) > 0]
@@ -316,25 +351,42 @@ def trade_count_for_rows(df):
 def trade_table_html(df):
     if df is None or df.empty:
         return "<div class='tiny'>No trades logged for this trading day.</div>"
-    cols = [c for c in ["time_et", "symbol", "side", "qty", "entry_price", "exit_price", "pnl", "pnl_pct", "exit_reason", "status"] if c in df.columns]
-    view = df[cols].copy()
-    rename = {
-        "time_et": "Time ET", "symbol": "Symbol", "side": "Side", "qty": "Qty",
-        "entry_price": "Entry", "exit_price": "Exit", "pnl": "P/L", "pnl_pct": "%",
-        "exit_reason": "Reason", "status": "Status",
-    }
-    view = view.rename(columns=rename)
-    view = view.loc[:, ~view.columns.duplicated()].copy()
-    for col in ["Entry", "Exit"]:
-        if col in view.columns:
-            view[col] = pd.to_numeric(view[col], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:.2f}")
-    if "P/L" in view.columns:
-        view["P/L"] = pd.to_numeric(view["P/L"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"${x:,.2f}")
-    if "%" in view.columns:
-        view["%"] = pd.to_numeric(view["%"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:+.2f}%")
-    if "Qty" in view.columns:
-        view["Qty"] = pd.to_numeric(view["Qty"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:,.0f}")
-    return view.to_html(index=False, escape=True, classes="trade-table")
+
+    cards = []
+    for _, r in df.iterrows():
+        pnl = pd.to_numeric(pd.Series([r.get("pnl", 0)]), errors="coerce").fillna(0).iloc[0]
+        cls = pnl_class(float(pnl))
+        symbol = str(r.get("symbol", "") or r.get("ticker", "") or "Trade").upper()
+        side = str(r.get("side", "") or "").upper()
+        qty = r.get("qty", "")
+        try:
+            qty_txt = f"{float(qty):,.0f}"
+        except Exception:
+            qty_txt = str(qty or "")
+        reason = str(r.get("exit_reason", "") or r.get("status", "") or "").strip()
+        time_txt = str(r.get("time_et", "") or "")
+        pct = r.get("pnl_pct", "")
+        try:
+            pct_txt = f" ({float(pct):+.2f}%)" if str(pct).strip() != "" else ""
+        except Exception:
+            pct_txt = ""
+        sub_bits = []
+        if time_txt:
+            sub_bits.append(time_txt)
+        if side:
+            sub_bits.append(side)
+        if qty_txt:
+            sub_bits.append(f"Qty {qty_txt}")
+        if reason:
+            sub_bits.append(reason)
+        sub = " | ".join(sub_bits)
+        cards.append(
+            f"<div class='trade-card trade-card-{cls}'>"
+            f"<div class='trade-card-top'><span>{symbol}</span><span>${float(pnl):+,.2f}{pct_txt}</span></div>"
+            f"<div class='trade-card-sub'>{sub}</div>"
+            f"</div>"
+        )
+    return "".join(cards)
 
 
 def render_trade_details(row, key_prefix="trade"):
@@ -768,7 +820,7 @@ for rank, row in enumerate(fleet_rows, start=1):
     render_row(row, rank=rank)
     children = group_children.get(row["bot_name"], [])
     if int(row.get("trades", 0) or 0) > 0:
-        with st.expander(f"Show trades for {row['bot_name']} ({row['trades']})", expanded=False):
+        with st.expander(f"Tap card trades: {row['bot_name']} ({row['trades']})", expanded=False):
             render_trade_details(row, key_prefix=f"main-{rank}")
     if children:
         children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
@@ -777,7 +829,7 @@ for rank, row in enumerate(fleet_rows, start=1):
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
                 if int(child.get("trades", 0) or 0) > 0:
-                    if st.checkbox(f"Show trades for {child['bot_name']} ({child['trades']})", key=f"apex_child_trades_{child_rank}_{child.get('bot_id','')}"):
+                    if st.checkbox(f"Tap to show trades for {child['bot_name']} ({child['trades']})", key=f"apex_child_trades_{child_rank}_{child.get('bot_id','')}"):
                         render_trade_details(child, key_prefix=f"child-{child_rank}")
 
 if load_errors:
