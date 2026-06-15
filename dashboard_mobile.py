@@ -55,6 +55,14 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 # The sheet IDs below came from your launcher .bat files.
 DEFAULT_START_EQUITY = 50000.0
 
+# Apex 50K is one account split across three strategy allocations, not three separate $50k bots.
+APEX_50K_CHILD_START_EQUITY = {
+    "METALS ORB": 22500.0,
+    "STRUCTURE HUNTER ORB": 17500.0,
+    "QUALITY SIZER": 10000.0,
+}
+
+
 BOT_SHEETS = [
     {
         "name": "Fusion Portfolio",
@@ -86,6 +94,7 @@ BOT_SHEETS = [
         "type": "group",
         "start_equity": DEFAULT_START_EQUITY,
         "children": ["METALS ORB", "STRUCTURE HUNTER ORB", "QUALITY SIZER"],
+        "child_start_equity": APEX_50K_CHILD_START_EQUITY,
     },
 ]
 
@@ -154,17 +163,70 @@ def norm(value):
     return "".join(ch.lower() for ch in str(value) if ch.isalnum())
 
 
-def best_snapshot_for_name(snapshots, wanted_name):
+def row_identity_text(df):
+    """Return searchable identity text from the newest row.
+
+    Some Apex 50K tabs are named differently from the display labels, so matching
+    only the worksheet title can accidentally reuse the newest tab for more than
+    one child bot. This also checks bot_name/account_name/bot_id fields.
+    """
+    if df is None or df.empty:
+        return ""
+    latest = df.iloc[-1]
+    parts = []
+    for col in ["bot_name", "account_name", "bot_id"]:
+        if col in df.columns:
+            value = latest.get(col, "")
+            if value is not None:
+                parts.append(str(value))
+    return " ".join(parts)
+
+
+def identity_matches(text, wanted_name):
+    text_n = norm(text)
+    wanted_n = norm(wanted_name)
+    if not text_n or not wanted_n:
+        return False
+    if wanted_n in text_n or text_n in wanted_n:
+        return True
+    # Strong aliases used by the Apex 50K three-bot account.
+    aliases = {
+        "metals orb": ["metals orb", "metals orb retest", "light trend"],
+        "structure hunter orb": ["structure hunter orb", "apex structure hunter"],
+        "quality sizer": ["quality sizer", "apex quality sizer"],
+    }
+    for alias in aliases.get(wanted_n, []):
+        if norm(alias) in text_n:
+            return True
+    return False
+
+
+def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
     if not snapshots:
         return None, pd.DataFrame()
+
     wanted = norm(wanted_name)
+
+    # 1) Exact worksheet title match.
     for title, df in snapshots.items():
         if norm(title) == wanted:
             return title, df
+
+    # 2) Exact/latest row identity match from bot_name/account_name/bot_id.
+    for title, df in snapshots.items():
+        if identity_matches(row_identity_text(df), wanted_name):
+            return title, df
+
+    # 3) Partial worksheet title match.
     for title, df in snapshots.items():
         if wanted in norm(title) or norm(title) in wanted:
             return title, df
-    # Prefer the newest tab if no names match.
+
+    # 4) Fallback to newest tab only for single-account sheets. For grouped child
+    # rows, fallback is disabled so the same newest tab is not reused incorrectly.
+    if not allow_fallback:
+        return None, pd.DataFrame()
+
     newest_title = None
     newest_time = None
     for title, df in snapshots.items():
@@ -260,11 +322,20 @@ def make_group_row(config, snapshots, trades):
     children = []
     used_tabs = set()
 
+    child_starts = config.get("child_start_equity", {})
+
     for child_name in config.get("children", []):
-        tab_name, df = best_snapshot_for_name({k: v for k, v in snapshots.items() if k not in used_tabs}, child_name)
+        tab_name, df = best_snapshot_for_name({k: v for k, v in snapshots.items() if k not in used_tabs}, child_name, allow_fallback=False)
         if df is not None and not df.empty:
             used_tabs.add(tab_name)
-            children.append(row_from_snapshot(child_name, tab_name, df, trades, detail_only=True, start_equity=DEFAULT_START_EQUITY))
+            children.append(row_from_snapshot(
+                child_name,
+                tab_name,
+                df,
+                trades,
+                detail_only=True,
+                start_equity=child_starts.get(child_name, DEFAULT_START_EQUITY),
+            ))
 
     # If the sheet has extra snapshot tabs, show them as detail too.
     for tab_name, df in snapshots.items():
@@ -381,4 +452,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; since-start tracking uses a $50,000 baseline per account/bot. Apex child equity is tracking-only and not double-counted.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K child baselines use their strategy allocations: Metals $22.5k, Structure $17.5k, Quality $10k. Apex child equity is tracking-only and not double-counted.")
