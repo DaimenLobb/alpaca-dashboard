@@ -293,6 +293,52 @@ def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
     return newest_title, snapshots[newest_title]
 
 
+def allocation_fraction(value):
+    """Convert allocation strings like '45%' or numbers like 0.45 into a fraction."""
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, str):
+            s = value.strip().replace('%', '')
+            if not s:
+                return 0.0
+            v = float(s)
+            return v / 100.0 if v > 1 else v
+        v = float(value)
+        return v / 100.0 if v > 1 else v
+    except Exception:
+        return 0.0
+
+
+def median_account_total_from_children(children, use_previous=False):
+    """Estimate the shared Apex account total from child rows and allocations.
+
+    Some Apex child snapshot rows can contain a strategy-specific figure that is
+    stale or transformed. The reliable account total is the common account value
+    implied by allocated rows: child_equity / allocation. Taking the median keeps
+    one bad child row from breaking the whole Apex section.
+    """
+    estimates = []
+    for child in children:
+        frac = allocation_fraction(child.get('allocation'))
+        if frac <= 0:
+            continue
+        value = child.get('previous_equity' if use_previous else 'equity', 0)
+        try:
+            value = float(value or 0)
+        except Exception:
+            value = 0.0
+        if value > 0:
+            estimates.append(value / frac)
+    if not estimates:
+        return 0.0
+    estimates = sorted(estimates)
+    mid = len(estimates) // 2
+    if len(estimates) % 2:
+        return estimates[mid]
+    return (estimates[mid - 1] + estimates[mid]) / 2.0
+
+
 def calc_delta(df):
     latest = float(df.iloc[-1].get("equity", 0) or 0)
     previous = float(df.iloc[-2].get("equity", latest) or latest) if len(df) > 1 else latest
@@ -350,11 +396,13 @@ def trade_count(trades, tab_name, bot_id=None):
 
 def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None):
     equity, pnl, pct = calc_delta(df)
+    previous_equity = equity - pnl
     latest = df.iloc[-1]
     return {
         "bot_name": display_name,
         "tab_name": tab_name,
         "equity": equity,
+        "previous_equity": previous_equity,
         "pnl": pnl,
         "pct": pct,
         "buying_power": float(latest.get("buying_power", 0) or 0),
@@ -405,18 +453,28 @@ def make_group_row(config, snapshots, trades):
         return None, []
 
     # Parent account card: Apex 50K is one Alpaca account split by allocation.
-    # The child rows are already the allocated equity rows for each bot_id, so
-    # the parent equity is the sum of METALS_ORB + STRUCTURE_ORB + QUALITY_SIZER.
+    # Use the shared account total implied by the bot_id rows, then recalculate
+    # each child as its allocation of that total. This fixes cases where a child
+    # row has a stale/transformed equity figure while the allocation is known.
     latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
-    parent_equity = sum(float(c.get("equity", 0) or 0) for c in children)
-    parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
-    parent_pnl = sum(float(c.get("pnl", 0) or 0) for c in children)
-    previous_equity = parent_equity - parent_pnl
+    parent_equity = median_account_total_from_children(children, use_previous=False)
+    previous_equity = median_account_total_from_children(children, use_previous=True) or parent_equity
+    parent_pnl = parent_equity - previous_equity
     parent_pct = 0.0 if previous_equity == 0 else (parent_pnl / previous_equity) * 100
+
+    for child in children:
+        frac = allocation_fraction(child.get("allocation"))
+        if frac > 0 and parent_equity > 0:
+            child["equity"] = parent_equity * frac
+            child["previous_equity"] = previous_equity * frac
+            child["pnl"] = child["equity"] - child["previous_equity"]
+            child["pct"] = 0.0 if child["previous_equity"] == 0 else (child["pnl"] / child["previous_equity"]) * 100
+
+    parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
 
     parent = {
         "bot_name": config["name"],
-        "tab_name": "account total from summed bot_id allocations",
+        "tab_name": "account total inferred from bot_id allocations",
         "equity": parent_equity,
         "pnl": parent_pnl,
         "pct": parent_pct,
@@ -525,4 +583,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the summed account total from exact bot_id rows; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the account total inferred from exact bot_id allocation rows; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
