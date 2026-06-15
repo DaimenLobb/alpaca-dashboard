@@ -46,6 +46,9 @@ div[data-testid="stCaptionContainer"] p { color: #d6e2ea !important; font-size: 
 div[data-testid="stExpander"] { border: 0 !important; background: transparent !important; }
 div[data-testid="stExpander"] details { border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; background: rgba(255,255,255,0.04); margin-bottom: 10px; }
 div[data-testid="stExpander"] summary { color: #f5f7fa !important; font-weight: 900; }
+.trade-table { width: 100%; border-collapse: collapse; margin: 8px 0 14px 0; font-size: 0.72rem; color: #e9f1f5; }
+.trade-table th { color: #d6e2ea; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.18); padding: 5px; }
+.trade-table td { padding: 5px; border-bottom: 1px solid rgba(255,255,255,0.08); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -146,8 +149,11 @@ def load_spreadsheet(spreadsheet_id):
 
         title = worksheet.title.strip()
         title_lower = title.lower()
-        if title_lower.endswith(" trades"):
-            trades[title[:-7].strip()] = df
+        # Trade tabs can be named "BOT Trades" or "BOT Trades (Legacy)".
+        # Anything with "trade" in the title is treated as a trade log.
+        if "trade" in title_lower:
+            clean_title = title.replace("(Legacy)", "").replace("Trades", "").replace("trades", "").strip()
+            trades[clean_title] = df
             continue
 
         # Snapshot tabs need equity. Ignore helper/config tabs that do not look like account snapshots.
@@ -255,6 +261,89 @@ def trade_count_for_bot_id(trades, wanted_bot_id):
             continue
         total += int((df["bot_id"].astype(str).map(norm) == wanted).sum())
     return total
+
+
+def all_trade_rows(trades):
+    frames = []
+    for title, df in (trades or {}).items():
+        if df is None or df.empty:
+            continue
+        tdf = df.copy()
+        tdf["trade_tab"] = title
+        if "timestamp" in tdf.columns:
+            tdf["timestamp"] = pd.to_datetime(tdf["timestamp"], errors="coerce", utc=True)
+        frames.append(tdf)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+    if "timestamp" in out.columns:
+        out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
+    if "pnl" in out.columns:
+        out["pnl"] = pd.to_numeric(out["pnl"], errors="coerce").fillna(0.0)
+    return out
+
+
+def filter_trade_rows(trades, bot_id=None, trade_date=None):
+    df = all_trade_rows(trades)
+    if df.empty:
+        return df
+    if bot_id and "bot_id" in df.columns:
+        wanted = norm(bot_id)
+        df = df[df["bot_id"].astype(str).map(norm) == wanted].copy()
+    if df.empty:
+        return df
+    if "timestamp" in df.columns:
+        et_times = df["timestamp"].dt.tz_convert("America/New_York")
+        df["trade_day_et"] = et_times.dt.date
+        df["time_et"] = et_times.dt.strftime("%H:%M")
+        if trade_date is None:
+            trade_date = df["trade_day_et"].max()
+        df = df[df["trade_day_et"] == trade_date].copy()
+    return df
+
+
+def trade_pnl_and_rows(trades, bot_id=None, trade_date=None):
+    df = filter_trade_rows(trades, bot_id=bot_id, trade_date=trade_date)
+    if df.empty or "pnl" not in df.columns:
+        return 0.0, df
+    return float(df["pnl"].sum()), df
+
+
+def trade_count_for_rows(df):
+    return 0 if df is None or df.empty else len(df)
+
+
+def trade_table_html(df):
+    if df is None or df.empty:
+        return "<div class='tiny'>No trades logged for this trading day.</div>"
+    cols = [c for c in ["time_et", "symbol", "side", "qty", "entry_price", "exit_price", "pnl", "pnl_pct", "exit_reason", "status"] if c in df.columns]
+    view = df[cols].copy()
+    rename = {
+        "time_et": "Time ET", "symbol": "Symbol", "side": "Side", "qty": "Qty",
+        "entry_price": "Entry", "exit_price": "Exit", "pnl": "P/L", "pnl_pct": "%",
+        "exit_reason": "Exit", "status": "Status",
+    }
+    view = view.rename(columns=rename)
+    for col in ["Entry", "Exit"]:
+        if col in view.columns:
+            view[col] = pd.to_numeric(view[col], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:.2f}")
+    if "P/L" in view.columns:
+        view["P/L"] = pd.to_numeric(view["P/L"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"${x:,.2f}")
+    if "%" in view.columns:
+        view["%"] = pd.to_numeric(view["%"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:+.2f}%")
+    if "Qty" in view.columns:
+        view["Qty"] = pd.to_numeric(view["Qty"], errors="coerce").map(lambda x: "" if pd.isna(x) else f"{x:,.0f}")
+    return view.to_html(index=False, escape=True, classes="trade-table")
+
+
+def render_trade_details(row, key_prefix="trade"):
+    trades_df = row.get("trade_rows")
+    trade_pnl = float(row.get("trade_pnl", 0) or 0)
+    trade_day = row.get("trade_day", "")
+    st.markdown(
+        f"<div class='tiny'><b>Trades {trade_day}</b> | Total realised P/L {trade_pnl:+,.2f}</div>" + trade_table_html(trades_df),
+        unsafe_allow_html=True,
+    )
 
 
 def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
@@ -440,8 +529,12 @@ def apply_leaderboard_baselines(rows, children_by_group):
         start = float(baselines.get(key, row.get("equity", 0)) or 0)
         equity = float(row.get("equity", 0) or 0)
         row["leaderboard_start"] = start
-        row["leaderboard_pnl"] = equity - start
-        row["leaderboard_pct"] = 0.0 if start == 0 else ((equity - start) / start) * 100
+        if int(row.get("trades", 0) or 0) > 0:
+            row["leaderboard_pnl"] = float(row.get("pnl", 0) or 0)
+            row["leaderboard_pct"] = 0.0 if start == 0 else (float(row.get("pnl", 0) or 0) / start) * 100
+        else:
+            row["leaderboard_pnl"] = equity - start
+            row["leaderboard_pct"] = 0.0 if start == 0 else ((equity - start) / start) * 100
 
     if changed:
         save_baselines(data)
@@ -462,21 +555,30 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
     equity, pnl, pct = calc_delta(df)
     previous_equity = equity - pnl
     latest = df.iloc[-1]
+    actual_bot_id = bot_id or str(latest.get("bot_id", "") or "")
+    trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_id=actual_bot_id or None)
+    trade_day = ""
+    if trade_rows is not None and not trade_rows.empty and "trade_day_et" in trade_rows.columns:
+        trade_day = str(trade_rows["trade_day_et"].max())
     return {
         "bot_name": display_name,
         "tab_name": tab_name,
         "equity": equity,
         "previous_equity": previous_equity,
-        "pnl": pnl,
-        "pct": pct,
+        "pnl": trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl,
+        "snapshot_pnl": pnl,
+        "pct": (0.0 if previous_equity == 0 else ((trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl) / previous_equity) * 100),
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": safe_int(latest.get("open_positions", 0)),
         "orders": safe_int(latest.get("open_orders", 0)),
         "last_update": latest.get("timestamp", ""),
-        "trades": trade_count(trades, tab_name, bot_id=bot_id),
+        "trades": trade_count_for_rows(trade_rows),
+        "trade_pnl": trade_pnl,
+        "trade_rows": trade_rows,
+        "trade_day": trade_day,
         "detail_only": detail_only,
         "start_equity": float(start_equity or DEFAULT_START_EQUITY),
-        "bot_id": bot_id or str(latest.get("bot_id", "") or ""),
+        "bot_id": actual_bot_id,
         "allocation": allocation or "",
     }
 
@@ -523,7 +625,11 @@ def make_group_row(config, snapshots, trades):
     latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
     parent_equity = median_account_total_from_children(children, use_previous=False)
     previous_equity = median_account_total_from_children(children, use_previous=True) or parent_equity
-    parent_pnl = parent_equity - previous_equity
+    # Daily P/L for Apex should come from the exact bot_id trade tabs when trades exist.
+    # This catches the case where bots traded/logged on the trade tabs but snapshots stayed flat.
+    trade_parent_pnl = sum(float(c.get("trade_pnl", 0) or 0) for c in children)
+    trade_parent_count = sum(int(c.get("trades", 0) or 0) for c in children)
+    parent_pnl = trade_parent_pnl if trade_parent_count > 0 else (parent_equity - previous_equity)
     parent_pct = 0.0 if previous_equity == 0 else (parent_pnl / previous_equity) * 100
 
     for child in children:
@@ -531,7 +637,10 @@ def make_group_row(config, snapshots, trades):
         if frac > 0 and parent_equity > 0:
             child["equity"] = parent_equity * frac
             child["previous_equity"] = previous_equity * frac
-            child["pnl"] = child["equity"] - child["previous_equity"]
+            if int(child.get("trades", 0) or 0) <= 0:
+                child["pnl"] = child["equity"] - child["previous_equity"]
+            else:
+                child["pnl"] = float(child.get("trade_pnl", 0) or 0)
             child["pct"] = 0.0 if child["previous_equity"] == 0 else (child["pnl"] / child["previous_equity"]) * 100
 
     parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
@@ -547,6 +656,9 @@ def make_group_row(config, snapshots, trades):
         "orders": max((c["orders"] for c in children), default=0),
         "last_update": latest_child.get("last_update", ""),
         "trades": sum(c["trades"] for c in children),
+        "trade_pnl": trade_parent_pnl,
+        "trade_rows": pd.concat([c.get("trade_rows", pd.DataFrame()) for c in children if c.get("trade_rows") is not None and not c.get("trade_rows").empty], ignore_index=True) if any(c.get("trade_rows") is not None and not c.get("trade_rows").empty for c in children) else pd.DataFrame(),
+        "trade_day": next((c.get("trade_day", "") for c in children if c.get("trade_day", "")), ""),
         "detail_only": False,
         "start_equity": float(config.get("start_equity", DEFAULT_START_EQUITY)),
         "bot_id": "APEX_50K_GROUP",
@@ -646,7 +758,7 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots — ranked by leaderboard P/L</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — ranked by P/L</div>', unsafe_allow_html=True)
 
 # Leaderboard cards: best Today P/L at the top.
 fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
@@ -654,16 +766,22 @@ fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0)
 for rank, row in enumerate(fleet_rows, start=1):
     render_row(row, rank=rank)
     children = group_children.get(row["bot_name"], [])
+    if int(row.get("trades", 0) or 0) > 0:
+        with st.expander(f"Show trades for {row['bot_name']} ({row['trades']})", expanded=False):
+            render_trade_details(row, key_prefix=f"main-{rank}")
     if children:
         children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
-            st.caption("Apex child cards are ranked separately by leaderboard P/L. They are tracking only and are not added into Total Fleet Equity.")
+            st.caption("Apex child cards are ranked separately by realised daily/session P/L. They are tracking only and are not added into Total Fleet Equity.")
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
+                if int(child.get("trades", 0) or 0) > 0:
+                    if st.checkbox(f"Show trades for {child['bot_name']} ({child['trades']})", key=f"apex_child_trades_{child_rank}_{child.get('bot_id','')}"):
+                        render_trade_details(child, key_prefix=f"child-{child_rank}")
 
 if load_errors:
     with st.expander("Load warnings", expanded=False):
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by leaderboard P/L; Apex 50K parent is ranked in the main list and Apex child cards are ranked separately inside the detail section.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by realised trade P/L when trade tabs have entries; otherwise by the saved leaderboard baseline. Click a bot's trade expander to see the logged trades underneath.")
