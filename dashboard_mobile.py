@@ -113,6 +113,18 @@ BOT_SHEETS = [
         "start_equity": DEFAULT_START_EQUITY,
     },
     {
+        "name": "Fusion SL Slots",
+        "spreadsheet_id": "1JLXVePIqjy7-FpOE2HMjvM4UxMDNWgEluSgApf2-YME",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Fusion Runner Slots",
+        "spreadsheet_id": "1qWaOG9xXGdIV-OfqX5JgboWEsZO6_CK2netMu7kHvUk",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
         "name": "Apex 50K 3-Bot Portfolio",
         "spreadsheet_id": "1pgYoFqiWDGLXh-GYCkFQ76oxT8v-kSQJ9EpSJkEAuHk",
         "type": "group",
