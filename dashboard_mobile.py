@@ -53,6 +53,8 @@ st.caption("Combined mobile view across separated Google Sheets")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 # The sheet IDs below came from your launcher .bat files.
+DEFAULT_START_EQUITY = 50000.0
+
 BOT_SHEETS = [
     {
         "name": "Fusion Portfolio",
@@ -87,7 +89,6 @@ BOT_SHEETS = [
     },
 ]
 
-DEFAULT_START_EQUITY = 50000.0
 
 NUMERIC_COLUMNS = [
     "equity", "buying_power", "open_positions", "open_orders", "qty",
