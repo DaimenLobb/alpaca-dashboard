@@ -88,6 +88,18 @@ BOT_SHEETS = [
         "start_equity": DEFAULT_START_EQUITY,
     },
     {
+        "name": "Fusion Portfolio Slots",
+        "spreadsheet_id": "1dEzsKBSgkezz_s130WJPfJ-TL-KgjwOW-DxTFBkv6F4",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Fusion 15 Slots",
+        "spreadsheet_id": "1WgColG2iURo0zBygjiS6iYQW4if2lDTW3BKDg_rRxrQ",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
         "name": "Fusion Smart SL",
         "spreadsheet_id": "1AD9Zkr1DRBUl74JbMxdQDbtdeVqV97s-3qac-hiddjo",
         "type": "single",
