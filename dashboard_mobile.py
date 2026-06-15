@@ -1,5 +1,6 @@
 import os
 import json
+import tempfile
 from datetime import datetime
 
 import pandas as pd
@@ -541,7 +542,7 @@ def fmt_time(value):
 
 
 
-BASELINE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sleep_check_leaderboard_baselines.json")
+BASELINE_FILE = os.path.join(tempfile.gettempdir(), "sleep_check_leaderboard_baselines.json")
 
 
 def baseline_key(row):
