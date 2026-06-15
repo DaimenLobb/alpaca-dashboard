@@ -56,11 +56,11 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 DEFAULT_START_EQUITY = 50000.0
 
 # Apex 50K is one account split across three strategy allocations, not three separate $50k bots.
-APEX_50K_CHILD_START_EQUITY = {
-    "METALS ORB": 22500.0,
-    "STRUCTURE HUNTER ORB": 17500.0,
-    "QUALITY SIZER": 10000.0,
-}
+APEX_50K_CHILDREN = [
+    {"name": "METALS ORB", "bot_id": "METALS_ORB", "start_equity": 22500.0, "allocation": "45%"},
+    {"name": "STRUCTURE HUNTER ORB", "bot_id": "STRUCTURE_ORB", "start_equity": 17500.0, "allocation": "35%"},
+    {"name": "QUALITY SIZER", "bot_id": "QUALITY_SIZER", "start_equity": 10000.0, "allocation": "20%"},
+]
 
 
 BOT_SHEETS = [
@@ -93,8 +93,7 @@ BOT_SHEETS = [
         "spreadsheet_id": "1pgYoFqiWDGLXh-GYCkFQ76oxT8v-kSQJ9EpSJkEAuHk",
         "type": "group",
         "start_equity": DEFAULT_START_EQUITY,
-        "children": ["METALS ORB", "STRUCTURE HUNTER ORB", "QUALITY SIZER"],
-        "child_start_equity": APEX_50K_CHILD_START_EQUITY,
+        "children": APEX_50K_CHILDREN,
     },
 ]
 
@@ -201,6 +200,61 @@ def identity_matches(text, wanted_name):
     return False
 
 
+def filter_snapshot_by_bot_id(snapshots, wanted_bot_id):
+    """Return the rows for one bot_id across all snapshot tabs.
+
+    Apex 50K writes three strategies into the same sheet/account. Matching by
+    worksheet name or newest timestamp can reuse the wrong bot. This function
+    uses the bot_id column first, which is the reliable identifier:
+    METALS_ORB, STRUCTURE_ORB, QUALITY_SIZER.
+    """
+    if not snapshots or not wanted_bot_id:
+        return None, pd.DataFrame()
+
+    wanted = norm(wanted_bot_id)
+    matches = []
+
+    for title, df in snapshots.items():
+        if df is None or df.empty or "bot_id" not in df.columns:
+            continue
+        mask = df["bot_id"].astype(str).map(norm) == wanted
+        filtered = df.loc[mask].copy()
+        if filtered.empty:
+            continue
+        source_name = title
+        if "bot_name" in filtered.columns:
+            latest_name = str(filtered.iloc[-1].get("bot_name", "") or "").strip()
+            if latest_name:
+                source_name = latest_name
+        matches.append((source_name, filtered))
+
+    if not matches:
+        return None, pd.DataFrame()
+
+    # If the same bot_id appears in more than one tab, combine and sort so daily
+    # P/L uses the last two rows for that exact bot only.
+    combined = pd.concat([m[1] for m in matches], ignore_index=True)
+    if "timestamp" in combined.columns:
+        combined = combined.dropna(subset=["timestamp"]).sort_values("timestamp")
+    source_names = []
+    for source_name, _ in matches:
+        if source_name not in source_names:
+            source_names.append(source_name)
+    return " / ".join(source_names), combined
+
+
+def trade_count_for_bot_id(trades, wanted_bot_id):
+    if not trades or not wanted_bot_id:
+        return 0
+    wanted = norm(wanted_bot_id)
+    total = 0
+    for _, df in trades.items():
+        if df is None or df.empty or "bot_id" not in df.columns:
+            continue
+        total += int((df["bot_id"].astype(str).map(norm) == wanted).sum())
+    return total
+
+
 def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
     if not snapshots:
         return None, pd.DataFrame()
@@ -283,7 +337,9 @@ def fmt_time(value):
         return str(value)
 
 
-def trade_count(trades, tab_name):
+def trade_count(trades, tab_name, bot_id=None):
+    if bot_id:
+        return trade_count_for_bot_id(trades, bot_id)
     if not trades:
         return 0
     title, df = best_snapshot_for_name(trades, tab_name)
@@ -292,7 +348,7 @@ def trade_count(trades, tab_name):
     return len(df)
 
 
-def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY):
+def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None):
     equity, pnl, pct = calc_delta(df)
     latest = df.iloc[-1]
     return {
@@ -305,9 +361,11 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         "positions": safe_int(latest.get("open_positions", 0)),
         "orders": safe_int(latest.get("open_orders", 0)),
         "last_update": latest.get("timestamp", ""),
-        "trades": trade_count(trades, tab_name),
+        "trades": trade_count(trades, tab_name, bot_id=bot_id),
         "detail_only": detail_only,
         "start_equity": float(start_equity or DEFAULT_START_EQUITY),
+        "bot_id": bot_id or str(latest.get("bot_id", "") or ""),
+        "allocation": allocation or "",
     }
 
 
@@ -320,34 +378,35 @@ def make_single_row(config, snapshots, trades):
 
 def make_group_row(config, snapshots, trades):
     children = []
-    used_tabs = set()
 
-    child_starts = config.get("child_start_equity", {})
+    for child in config.get("children", []):
+        child_name = child.get("name", "")
+        child_bot_id = child.get("bot_id", "")
+        tab_name, df = filter_snapshot_by_bot_id(snapshots, child_bot_id)
 
-    for child_name in config.get("children", []):
-        tab_name, df = best_snapshot_for_name({k: v for k, v in snapshots.items() if k not in used_tabs}, child_name, allow_fallback=False)
+        # Fallback only if the sheet does not have bot_id. With bot_id available,
+        # no fallback is used because it can reuse another bot's newest row.
+        if (df is None or df.empty) and not any("bot_id" in s.columns for s in snapshots.values()):
+            tab_name, df = best_snapshot_for_name(snapshots, child_name, allow_fallback=False)
+
         if df is not None and not df.empty:
-            used_tabs.add(tab_name)
             children.append(row_from_snapshot(
                 child_name,
                 tab_name,
                 df,
                 trades,
                 detail_only=True,
-                start_equity=child_starts.get(child_name, DEFAULT_START_EQUITY),
+                start_equity=child.get("start_equity", DEFAULT_START_EQUITY),
+                bot_id=child_bot_id,
+                allocation=child.get("allocation", ""),
             ))
-
-    # If the sheet has extra snapshot tabs, show them as detail too.
-    for tab_name, df in snapshots.items():
-        if tab_name not in used_tabs:
-            children.append(row_from_snapshot(tab_name, tab_name, df, trades, detail_only=True, start_equity=DEFAULT_START_EQUITY))
 
     if not children:
         return None, []
 
     # Parent account card: Apex 50K is one Alpaca account split by allocation.
-    # The child rows show allocated equity, so the parent account equity is the
-    # sum of those allocated equities, not the newest child row.
+    # The child rows are already the allocated equity rows for each bot_id, so
+    # the parent equity is the sum of METALS_ORB + STRUCTURE_ORB + QUALITY_SIZER.
     latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
     parent_equity = sum(float(c.get("equity", 0) or 0) for c in children)
     parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
@@ -357,7 +416,7 @@ def make_group_row(config, snapshots, trades):
 
     parent = {
         "bot_name": config["name"],
-        "tab_name": "account total from summed strategy allocations",
+        "tab_name": "account total from summed bot_id allocations",
         "equity": parent_equity,
         "pnl": parent_pnl,
         "pct": parent_pct,
@@ -368,9 +427,10 @@ def make_group_row(config, snapshots, trades):
         "trades": sum(c["trades"] for c in children),
         "detail_only": False,
         "start_equity": float(config.get("start_equity", DEFAULT_START_EQUITY)),
+        "bot_id": "APEX_50K_GROUP",
+        "allocation": "100%",
     }
     return parent, children
-
 
 def render_row(row, child=False):
     cls = pnl_class(row["pnl"])
@@ -380,16 +440,18 @@ def render_row(row, child=False):
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
     source_label = "Apex bot source" if child else "Source"
+    allocation_text = f"<span>Allocation {row.get('allocation')}</span>" if child and row.get("allocation") else ""
+    bot_id_text = f" | bot_id: {row.get('bot_id')}" if child and row.get("bot_id") else ""
     st.markdown(
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
                 <div class="{name_class}">{row["bot_name"]}</div>
                 <div class="bot-pnl-{cls}">Today {row["pnl"]:+,.0f}</div>
             </div>
-            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pct"]:+.2f}%</span></div>
+            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pct"]:+.2f}%</span>{allocation_text}</div>
             <div class="since-line since-{since_cls}">Since {money(start)}: {since_gain:+,.0f} ({since_pct:+.2f}%)</div>
             <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
-            <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}</div>
+            <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
         </div>''',
         unsafe_allow_html=True,
     )
@@ -463,4 +525,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the summed account total from its strategy allocations; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Today P/L stays prominent; Apex 50K parent equity is the summed account total from exact bot_id rows; child rows show Metals 45%, Structure 35%, Quality 20% and are not double-counted.")
