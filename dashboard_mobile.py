@@ -610,9 +610,14 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
     latest = df.iloc[-1]
     actual_bot_id = bot_id or str(latest.get("bot_id", "") or "")
     actual_bot_id = "" if str(actual_bot_id).strip().lower() in ("", "nan", "none") else str(actual_bot_id).strip()
-    # If a bot_id exists, use it. If not, use all trade rows in this bot's own spreadsheet.
-    # This restores single-bot trade history where the trade tab does not carry a bot_id column.
-    trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_id=actual_bot_id or None)
+
+    # Trade matching rule:
+    # - Apex 50K child rows pass bot_id explicitly, so filter by that exact bot_id.
+    # - Single-bot Fusion sheets should use all trades from their own spreadsheet, even
+    #   when the snapshot row has a bot_id. Some Fusion trade tabs either have no
+    #   bot_id or use a different logger value, and filtering hid those trades.
+    trade_filter_bot_id = bot_id if bot_id else None
+    trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_id=trade_filter_bot_id)
     trade_day = ""
     if trade_rows is not None and not trade_rows.empty and "trade_day_et" in trade_rows.columns:
         trade_day = str(trade_rows["trade_day_et"].max())
