@@ -275,15 +275,17 @@ def render_row(row, child=False):
     cls = pnl_class(row["pnl"])
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
+    equity_label = "Bot Equity" if child else "Equity"
+    source_label = "Apex bot source" if child else "Source"
     st.markdown(
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
                 <div class="{name_class}">{row["bot_name"]}</div>
                 <div class="bot-pnl-{cls}">{row["pnl"]:+,.0f}</div>
             </div>
-            <div class="bot-subline"><span>Equity {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div>
+            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>{row["pct"]:+.2f}%</span></div>
             <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
-            <div class="tiny">Last: {fmt_time(row["last_update"])} | Source: {row["tab_name"]}</div>
+            <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}</div>
         </div>''',
         unsafe_allow_html=True,
     )
@@ -343,7 +345,8 @@ for row in fleet_rows:
     render_row(row)
     children = group_children.get(row["bot_name"], [])
     if children:
-        with st.expander("Show Apex 50K bot details", expanded=False):
+        with st.expander("Show Apex 50K bot equity tracking", expanded=True):
+            st.caption("These three equity rows are shown for tracking only and are not added into Total Fleet Equity.")
             for child in children:
                 render_row(child, child=True)
 
@@ -352,4 +355,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Apex 50K child bots are detail rows only, so they are not double-counted in the fleet total.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Apex 50K child bot equity is shown for tracking only, so it is not double-counted in the fleet total.")
