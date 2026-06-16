@@ -373,13 +373,8 @@ def trade_pnl_and_rows(trades, bot_id=None, trade_date=None):
     return float(df["pnl"].sum()), df
 
 
-def all_logged_trade_pnl_and_rows(trades, bot_id=None):
-    """Sum the logged trade P/L from the trade tabs without applying the daily reset.
-
-    For Apex 50K child bots this is the 'far right column' trade result totaliser.
-    It keeps showing how that bot went from the logged trade rows, while Daily P/L
-    can still reset separately at premarket.
-    """
+def logged_trade_totaliser(trades, bot_id=None):
+    """Sum logged trade P/L without applying the daily/session date filter."""
     df = all_trade_rows(trades)
     if df.empty:
         return 0.0, df
@@ -443,10 +438,20 @@ def trade_table_html(df):
     return "".join(cards)
 
 
-def render_trade_details(row, key_prefix="trade"):
+def render_trade_details(row, key_prefix=""):
     trades_df = row.get("trade_rows")
     trade_pnl = float(row.get("trade_pnl", 0) or 0)
     trade_day = row.get("trade_day", "")
+
+    if (trades_df is None or trades_df.empty) and row.get("totaliser_trade_rows") is not None:
+        trades_df = row.get("totaliser_trade_rows")
+        trade_pnl = float(row.get("totaliser_pnl", 0) or 0)
+        trade_day = "logged total"
+
+    if trades_df is None or trades_df.empty:
+        st.markdown("<div class='tiny'>No trades logged for this bot today/session.</div>", unsafe_allow_html=True)
+        return
+
     st.markdown(
         f"<div class='tiny'><b>Trades {trade_day}</b> | Total realised P/L {trade_pnl:+,.2f}</div>" + trade_table_html(trades_df),
         unsafe_allow_html=True,
@@ -804,8 +809,7 @@ def make_group_row(config, snapshots, trades):
                 bot_id=child_bot_id,
                 allocation=child.get("allocation", ""),
             )
-
-            totaliser_pnl, totaliser_rows = all_logged_trade_pnl_and_rows(trades, bot_id=child_bot_id)
+            totaliser_pnl, totaliser_rows = logged_trade_totaliser(trades, bot_id=child_bot_id)
             child_row["totaliser_pnl"] = totaliser_pnl
             child_row["totaliser_trades"] = trade_count_for_rows(totaliser_rows)
             child_row["totaliser_trade_rows"] = totaliser_rows
@@ -862,6 +866,18 @@ def make_group_row(config, snapshots, trades):
     }
     return parent, children
 
+
+def is_waiting_for_trading_day():
+    """Before premarket begins, keep cards visually grey."""
+    return datetime.now(ET).time() < dtime(4, 0)
+
+
+def display_card_class(row, child=False):
+    if is_waiting_for_trading_day():
+        return "flat"
+    return pnl_class(float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0))
+
+
 def rank_badge(rank):
     if rank == 1:
         return "🥇"
@@ -874,10 +890,10 @@ def rank_badge(rank):
 
 def render_row(row, child=False, rank=None):
     display_pnl = float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0)
-    cls = pnl_class(display_pnl)
+    cls = display_card_class(row, child=child)
+    pnl_text_cls = pnl_class(display_pnl)
     lb_start = float(row.get("leaderboard_start", row.get("equity", 0)) or 0)
     lb_pct = float(row.get("leaderboard_pct", 0) or 0)
-    since_cls = pnl_class(display_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -886,26 +902,36 @@ def render_row(row, child=False, rank=None):
     bot_id_text = f" | bot_id: {row.get('bot_id')}" if child and row.get("bot_id") else ""
     badge_html = f'<span class="rank-badge">{rank_badge(rank)}</span>' if rank else ""
 
+    waiting = is_waiting_for_trading_day()
+    daily_label = "Waiting" if waiting else f'{row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)'
+    waiting_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
+
     totaliser_html = ""
-    if child and row.get("totaliser_trades", 0):
+    trades_display = row.get("trades", 0)
+    if child and int(row.get("totaliser_trades", 0) or 0) > 0:
         totaliser_pnl = float(row.get("totaliser_pnl", 0) or 0)
         totaliser_cls = pnl_class(totaliser_pnl)
-        totaliser_html = f"<div class='since-line since-{totaliser_cls}'>Logged trade totaliser: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades</div>"
+        totaliser_html = (
+            f"<div class='since-line since-{totaliser_cls}'>"
+            f"Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades"
+            f"</div>"
+        )
+        trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    st.markdown(
-        f'''<div class="bot-row bot-row-{cls}{child_class}">
-            <div class="bot-topline">
-                <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
-                <div class="bot-pnl-{cls}">P/L {display_pnl:+,.0f}</div>
-            </div>
-            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)</span>{allocation_text}</div>
-            <div class="since-line since-{since_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
-            {totaliser_html}
-            <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row.get("totaliser_trades", row["trades"]) if child else row["trades"]}</span></div>
-            <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
-        </div>''',
-        unsafe_allow_html=True,
-    )
+    card_html = f'''<div class="bot-row bot-row-{cls}{child_class}">
+        <div class="bot-topline">
+            <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
+            <div class="bot-pnl-{pnl_text_cls}">P/L {display_pnl:+,.0f}</div>
+        </div>
+        <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_label}</span>{allocation_text}</div>
+        {waiting_line}
+        <div class="since-line since-{pnl_text_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
+        {totaliser_html}
+        <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>
+        <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
+    </div>'''
+    st.markdown(card_html, unsafe_allow_html=True)
+
 
 
 fleet_rows = []
@@ -979,12 +1005,12 @@ for rank, row in enumerate(fleet_rows, start=1):
     if children:
         children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
-            st.caption("Apex child cards include a logged trade totaliser from the trade-tab P/L column. They are tracking only and are not added into Total Fleet Equity.")
+            st.caption("Apex child cards stay grey while waiting for the trading day. Their realised total P/L remains red/green and is not added into Total Fleet Equity.")
             apex_child_total_pnl = sum(float(c.get("totaliser_pnl", 0) or 0) for c in children)
             apex_child_total_trades = sum(int(c.get("totaliser_trades", 0) or 0) for c in children)
             apex_child_total_cls = pnl_class(apex_child_total_pnl)
             st.markdown(
-                f"<div class='summary-card' style='padding:10px 12px; margin-bottom:10px;'><div class='summary-label'>Apex logged trade totaliser</div><div class='summary-pnl-{apex_child_total_cls}'>{apex_child_total_pnl:+,.0f}</div><div class='tiny'>From {apex_child_total_trades} logged trades in the Apex trade tabs. Daily P/L still resets separately.</div></div>",
+                f"<div class='summary-card' style='padding:10px 12px; margin-bottom:10px;'><div class='summary-label'>Apex realised total P/L</div><div class='summary-pnl-{apex_child_total_cls}'>{apex_child_total_pnl:+,.0f}</div><div class='tiny'>From {apex_child_total_trades} logged trades. Daily P/L resets separately.</div></div>",
                 unsafe_allow_html=True,
             )
             for child_rank, child in enumerate(children, start=1):
