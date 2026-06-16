@@ -88,6 +88,9 @@ BOT_SHEETS = [
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
+        # Prevent this card from accidentally picking up the normal Fusion Portfolio tab.
+        "source_hints": ["15 MIN", "15MIN", "FUSION15", "FUSION_15", "DELAY"],
+        "strict_source_hints": True,
     },
     {
         "name": "Fusion Portfolio Slots",
@@ -463,6 +466,43 @@ def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
     return newest_title, snapshots[newest_title]
 
 
+def best_snapshot_by_hints(snapshots, source_hints, allow_fallback=True):
+    """Find a snapshot tab/row using explicit source hints.
+
+    This is used for similarly named bots such as Fusion Portfolio and Fusion 15,
+    where a loose fallback can otherwise pick the wrong account tab.
+    """
+    hints = [norm(h) for h in (source_hints or []) if str(h).strip()]
+    if not hints:
+        return None, pd.DataFrame()
+
+    # Prefer latest row identity text first because tab names can be generic.
+    for title, df in snapshots.items():
+        identity = norm(row_identity_text(df))
+        if any(h in identity for h in hints):
+            return title, df
+
+    # Then try worksheet title.
+    for title, df in snapshots.items():
+        title_norm = norm(title)
+        if any(h in title_norm for h in hints):
+            return title, df
+
+    if not allow_fallback:
+        return None, pd.DataFrame()
+
+    newest_title = None
+    newest_time = None
+    for title, df in snapshots.items():
+        if "timestamp" in df.columns and not df["timestamp"].dropna().empty:
+            t = df["timestamp"].dropna().iloc[-1]
+        else:
+            t = pd.Timestamp.min
+        if newest_time is None or t > newest_time:
+            newest_title, newest_time = title, t
+    return newest_title, snapshots[newest_title]
+
+
 def allocation_fraction(value):
     """Convert allocation strings like '45%' or numbers like 0.45 into a fraction."""
     try:
@@ -557,6 +597,7 @@ def fmt_time(value):
 
 ET = ZoneInfo("America/New_York")
 SESSION_RESET_HOUR_ET = 4
+BASELINE_VERSION = "premarket_v2_strict_fusion15_apex_total"
 
 
 def current_session_date_et():
@@ -615,10 +656,11 @@ def apply_leaderboard_baselines(rows, children_by_group):
     """
     data = load_baselines()
     session_key = current_session_key()
-    if data.get("session_key") != session_key:
+    if data.get("session_key") != session_key or data.get("version") != BASELINE_VERSION:
         data = {
             "created_at": datetime.now().isoformat(),
             "session_key": session_key,
+            "version": BASELINE_VERSION,
             "reset_rule": f"Resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket",
             "baselines": {},
         }
@@ -700,7 +742,14 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
 
 
 def make_single_row(config, snapshots, trades):
-    tab_name, df = best_snapshot_for_name(snapshots, config["name"])
+    if config.get("source_hints"):
+        tab_name, df = best_snapshot_by_hints(
+            snapshots,
+            config.get("source_hints"),
+            allow_fallback=not bool(config.get("strict_source_hints")),
+        )
+    else:
+        tab_name, df = best_snapshot_for_name(snapshots, config["name"])
     if df is None or df.empty:
         return None
     return row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
@@ -892,6 +941,12 @@ for rank, row in enumerate(fleet_rows, start=1):
         children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
             st.caption("Apex child cards are ranked separately by realised daily/session P/L. They are tracking only and are not added into Total Fleet Equity.")
+            apex_child_total_pnl = sum(float(c.get("leaderboard_pnl", c.get("pnl", 0)) or 0) for c in children)
+            apex_child_total_cls = pnl_class(apex_child_total_pnl)
+            st.markdown(
+                f"<div class='summary-card' style='padding:10px 12px; margin-bottom:10px;'><div class='summary-label'>Apex internal total P/L</div><div class='summary-pnl-{apex_child_total_cls}'>{apex_child_total_pnl:+,.0f}</div></div>",
+                unsafe_allow_html=True,
+            )
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
                 with st.expander(f"👆 Tap to show trades for {child['bot_name']} ({child['trades']})", expanded=False):
