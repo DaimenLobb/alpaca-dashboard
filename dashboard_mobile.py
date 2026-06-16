@@ -869,7 +869,7 @@ def make_group_row(config, snapshots, trades):
 
 def is_waiting_for_trading_day():
     """Before premarket begins, keep cards visually grey."""
-    return datetime.now(ET).time() < time(4, 0)
+    return datetime.now(ET).hour < 4
 
 
 def display_card_class(row, child=False):
