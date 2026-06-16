@@ -373,6 +373,31 @@ def trade_pnl_and_rows(trades, bot_id=None, trade_date=None):
     return float(df["pnl"].sum()), df
 
 
+def all_logged_trade_pnl_and_rows(trades, bot_id=None):
+    """Sum the logged trade P/L from the trade tabs without applying the daily reset.
+
+    For Apex 50K child bots this is the 'far right column' trade result totaliser.
+    It keeps showing how that bot went from the logged trade rows, while Daily P/L
+    can still reset separately at premarket.
+    """
+    df = all_trade_rows(trades)
+    if df.empty:
+        return 0.0, df
+    if bot_id and "bot_id" in df.columns:
+        wanted = norm(bot_id)
+        df = df[df["bot_id"].astype(str).map(norm) == wanted].copy()
+    if df.empty or "pnl" not in df.columns:
+        return 0.0, df
+    if "timestamp" in df.columns:
+        try:
+            et_times = df["timestamp"].dt.tz_convert("America/New_York")
+            df["trade_day_et"] = et_times.dt.date
+            df["time_et"] = et_times.dt.strftime("%H:%M")
+        except Exception:
+            pass
+    return float(df["pnl"].sum()), df
+
+
 def trade_count_for_rows(df):
     return 0 if df is None or df.empty else len(df)
 
@@ -597,7 +622,7 @@ def fmt_time(value):
 
 ET = ZoneInfo("America/New_York")
 SESSION_RESET_HOUR_ET = 4
-BASELINE_VERSION = "daily_premarket_reset_v3_overall_static_start"
+BASELINE_VERSION = "premarket_v2_strict_fusion15_apex_total"
 
 
 def current_session_date_et():
@@ -647,13 +672,12 @@ def save_baselines(data):
         st.warning(f"Could not save leaderboard baselines: {type(e).__name__}: {e}")
 
 
-def apply_pnl_metrics(rows, children_by_group):
-    """Attach overall and daily P/L metrics to every row.
+def apply_leaderboard_baselines(rows, children_by_group):
+    """Set each bot's leaderboard start value and P/L.
 
-    overall_pnl keeps running and does not reset. It is based on the configured
-    start_equity for each bot/account.
-
-    daily_pnl resets each premarket session at SESSION_RESET_HOUR_ET.
+    The old green 'Since allocation' line was not real P/L. This starts the
+    leaderboard from the first run of this version, so current values show 0 and
+    future movement is true P/L per bot/account.
     """
     data = load_baselines()
     session_key = current_session_key()
@@ -662,7 +686,7 @@ def apply_pnl_metrics(rows, children_by_group):
             "created_at": datetime.now().isoformat(),
             "session_key": session_key,
             "version": BASELINE_VERSION,
-            "reset_rule": f"Daily P/L resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket",
+            "reset_rule": f"Resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket",
             "baselines": {},
         }
     baselines = data.setdefault("baselines", {})
@@ -673,26 +697,19 @@ def apply_pnl_metrics(rows, children_by_group):
         all_rows.extend(child_list)
 
     for row in all_rows:
-        equity = float(row.get("equity", 0) or 0)
-
-        overall_start = float(row.get("start_equity", equity) or equity)
-        row["overall_start"] = overall_start
-        row["overall_pnl"] = equity - overall_start
-        row["overall_pct"] = 0.0 if overall_start == 0 else ((equity - overall_start) / overall_start) * 100
-
         key = baseline_key(row)
         if key not in baselines:
-            baselines[key] = equity
+            baselines[key] = float(row.get("equity", 0) or 0)
             changed = True
-        daily_start = float(baselines.get(key, equity) or equity)
-        row["daily_start"] = daily_start
-        row["daily_pnl"] = equity - daily_start
-        row["daily_pct"] = 0.0 if daily_start == 0 else ((equity - daily_start) / daily_start) * 100
-
-        # Compatibility for existing sort/render fallbacks.
-        row["leaderboard_start"] = overall_start
-        row["leaderboard_pnl"] = row["overall_pnl"]
-        row["leaderboard_pct"] = row["overall_pct"]
+        start = float(baselines.get(key, row.get("equity", 0)) or 0)
+        equity = float(row.get("equity", 0) or 0)
+        row["leaderboard_start"] = start
+        if int(row.get("trades", 0) or 0) > 0:
+            row["leaderboard_pnl"] = float(row.get("pnl", 0) or 0)
+            row["leaderboard_pct"] = 0.0 if start == 0 else (float(row.get("pnl", 0) or 0) / start) * 100
+        else:
+            row["leaderboard_pnl"] = equity - start
+            row["leaderboard_pct"] = 0.0 if start == 0 else ((equity - start) / start) * 100
 
     if changed:
         save_baselines(data)
@@ -777,7 +794,7 @@ def make_group_row(config, snapshots, trades):
             tab_name, df = best_snapshot_for_name(snapshots, child_name, allow_fallback=False)
 
         if df is not None and not df.empty:
-            children.append(row_from_snapshot(
+            child_row = row_from_snapshot(
                 child_name,
                 tab_name,
                 df,
@@ -786,7 +803,13 @@ def make_group_row(config, snapshots, trades):
                 start_equity=child.get("start_equity", DEFAULT_START_EQUITY),
                 bot_id=child_bot_id,
                 allocation=child.get("allocation", ""),
-            ))
+            )
+
+            totaliser_pnl, totaliser_rows = all_logged_trade_pnl_and_rows(trades, bot_id=child_bot_id)
+            child_row["totaliser_pnl"] = totaliser_pnl
+            child_row["totaliser_trades"] = trade_count_for_rows(totaliser_rows)
+            child_row["totaliser_trade_rows"] = totaliser_rows
+            children.append(child_row)
 
     if not children:
         return None, []
@@ -850,12 +873,10 @@ def rank_badge(rank):
 
 
 def render_row(row, child=False, rank=None):
-    display_pnl = float(row.get("overall_pnl", row.get("leaderboard_pnl", row.get("pnl", 0))) or 0)
-    daily_pnl = float(row.get("daily_pnl", row.get("pnl", 0)) or 0)
-    daily_pct = float(row.get("daily_pct", row.get("pct", 0)) or 0)
+    display_pnl = float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0)
     cls = pnl_class(display_pnl)
-    lb_start = float(row.get("overall_start", row.get("start_equity", row.get("equity", 0))) or 0)
-    lb_pct = float(row.get("overall_pct", 0) or 0)
+    lb_start = float(row.get("leaderboard_start", row.get("equity", 0)) or 0)
+    lb_pct = float(row.get("leaderboard_pct", 0) or 0)
     since_cls = pnl_class(display_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
@@ -864,15 +885,23 @@ def render_row(row, child=False, rank=None):
     allocation_text = f"<span>Allocation {row.get('allocation')}</span>" if child and row.get("allocation") else ""
     bot_id_text = f" | bot_id: {row.get('bot_id')}" if child and row.get("bot_id") else ""
     badge_html = f'<span class="rank-badge">{rank_badge(rank)}</span>' if rank else ""
+
+    totaliser_html = ""
+    if child and row.get("totaliser_trades", 0):
+        totaliser_pnl = float(row.get("totaliser_pnl", 0) or 0)
+        totaliser_cls = pnl_class(totaliser_pnl)
+        totaliser_html = f"<div class='since-line since-{totaliser_cls}'>Logged trade totaliser: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades</div>"
+
     st.markdown(
         f'''<div class="bot-row bot-row-{cls}{child_class}">
             <div class="bot-topline">
                 <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
                 <div class="bot-pnl-{cls}">P/L {display_pnl:+,.0f}</div>
             </div>
-            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_pnl:+,.0f} ({daily_pct:+.2f}%)</span>{allocation_text}</div>
-            <div class="since-line since-{since_cls}">Overall from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
-            <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
+            <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)</span>{allocation_text}</div>
+            <div class="since-line since-{since_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
+            {totaliser_html}
+            <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row.get("totaliser_trades", row["trades"]) if child else row["trades"]}</span></div>
             <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
         </div>''',
         unsafe_allow_html=True,
@@ -907,13 +936,13 @@ if not fleet_rows:
         st.error("\n".join(load_errors))
     st.stop()
 
-baseline_data = apply_pnl_metrics(fleet_rows, group_children)
+baseline_data = apply_leaderboard_baselines(fleet_rows, group_children)
 
 # Grand total uses parent account rows only. Apex child rows stay detail-only.
 total_equity = sum(r["equity"] for r in fleet_rows)
 total_bp = sum(r["buying_power"] for r in fleet_rows)
-total_pnl = sum(float(r.get("overall_pnl", 0) or 0) for r in fleet_rows)
-total_daily_pnl = sum(float(r.get("daily_pnl", 0) or 0) for r in fleet_rows)
+total_pnl = sum(float(r.get("leaderboard_pnl", r.get("pnl", 0)) or 0) for r in fleet_rows)
+total_daily_pnl = sum(r["pnl"] for r in fleet_rows)
 total_positions = sum(r["positions"] for r in fleet_rows)
 total_orders = sum(r["orders"] for r in fleet_rows)
 total_start = sum(float(r.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY) for r in fleet_rows)
@@ -922,9 +951,8 @@ total_since_pct = 0.0 if total_start == 0 else (total_since / total_start) * 100
 cls = pnl_class(total_pnl)
 since_cls = pnl_class(total_pnl)
 
-daily_cls = pnl_class(total_daily_pnl)
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{daily_cls}">Today P/L {total_daily_pnl:+,.0f}</div><div class="since-line since-{cls}">Overall P/L {total_pnl:+,.0f} | Daily reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -934,10 +962,10 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots — ranked by Overall P/L</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — ranked by Today P/L</div>', unsafe_allow_html=True)
 
-# Leaderboard cards: best Overall P/L at the top.
-fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("overall_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
+# Leaderboard cards: best Today P/L at the top.
+fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
 
 for rank, row in enumerate(fleet_rows, start=1):
     render_row(row, rank=rank)
@@ -949,20 +977,19 @@ for rank, row in enumerate(fleet_rows, start=1):
         render_trade_details(row, key_prefix=f"main-{rank}")
 
     if children:
-        children = sorted(children, key=lambda r: (float(r.get("overall_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
+        children = sorted(children, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
         with st.expander("Show Apex 50K bot equity tracking", expanded=True):
-            st.caption("Apex child cards are ranked separately by overall P/L. They are tracking only and are not added into Total Fleet Equity.")
-            apex_child_total_pnl = sum(float(c.get("overall_pnl", 0) or 0) for c in children)
-            apex_child_daily_pnl = sum(float(c.get("daily_pnl", 0) or 0) for c in children)
+            st.caption("Apex child cards include a logged trade totaliser from the trade-tab P/L column. They are tracking only and are not added into Total Fleet Equity.")
+            apex_child_total_pnl = sum(float(c.get("totaliser_pnl", 0) or 0) for c in children)
+            apex_child_total_trades = sum(int(c.get("totaliser_trades", 0) or 0) for c in children)
             apex_child_total_cls = pnl_class(apex_child_total_pnl)
-            apex_child_daily_cls = pnl_class(apex_child_daily_pnl)
             st.markdown(
-                f"<div class='summary-card' style='padding:10px 12px; margin-bottom:10px;'><div class='summary-label'>Apex internal total P/L</div><div class='summary-pnl-{apex_child_total_cls}'>Overall {apex_child_total_pnl:+,.0f}</div><div class='since-line since-{apex_child_daily_cls}'>Today {apex_child_daily_pnl:+,.0f}</div></div>",
+                f"<div class='summary-card' style='padding:10px 12px; margin-bottom:10px;'><div class='summary-label'>Apex logged trade totaliser</div><div class='summary-pnl-{apex_child_total_cls}'>{apex_child_total_pnl:+,.0f}</div><div class='tiny'>From {apex_child_total_trades} logged trades in the Apex trade tabs. Daily P/L still resets separately.</div></div>",
                 unsafe_allow_html=True,
             )
             for child_rank, child in enumerate(children, start=1):
                 render_row(child, child=True, rank=child_rank)
-                with st.expander(f"👆 Tap to show trades for {child['bot_name']} ({child['trades']})", expanded=False):
+                with st.expander(f"👆 Tap to show trades for {child['bot_name']} ({child.get('totaliser_trades', child['trades'])})", expanded=False):
                     render_trade_details(child, key_prefix=f"child-{child_rank}")
 
 if load_errors:
@@ -970,4 +997,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by overall P/L. Daily P/L resets automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by today/session P/L. Daily baselines reset automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
