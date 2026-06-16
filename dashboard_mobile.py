@@ -87,7 +87,7 @@ BOT_SHEETS = [
         "name": "Fusion 15",
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
+        "start_equity": 65000.0,
         # Prevent this card from accidentally picking up the normal Fusion Portfolio tab.
         "source_hints": ["15 MIN", "15MIN", "FUSION15", "FUSION_15", "DELAY"],
         "strict_source_hints": True,
@@ -102,7 +102,7 @@ BOT_SHEETS = [
         "name": "Fusion 15 Slots",
         "spreadsheet_id": "1WgColG2iURo0zBygjiS6iYQW4if2lDTW3BKDg_rRxrQ",
         "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
+        "start_equity": 65000.0,
     },
     {
         "name": "Fusion Smart SL",
@@ -892,8 +892,6 @@ def render_row(row, child=False, rank=None):
     display_pnl = float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0)
     cls = display_card_class(row, child=child)
     pnl_text_cls = pnl_class(display_pnl)
-    lb_start = float(row.get("leaderboard_start", row.get("equity", 0)) or 0)
-    lb_pct = float(row.get("leaderboard_pct", 0) or 0)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -906,6 +904,21 @@ def render_row(row, child=False, rank=None):
     daily_label = "Waiting" if waiting else f'{row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)'
     waiting_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
 
+    # Main cards: permanent overall score from original starting equity.
+    # Apex child cards: keep the separate realised totaliser line.
+    if child:
+        secondary_html = ""
+    else:
+        overall_start = float(row.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY)
+        overall_pnl = float(row.get("equity", 0) or 0) - overall_start
+        overall_pct = 0.0 if overall_start == 0 else (overall_pnl / overall_start) * 100
+        overall_cls = pnl_class(overall_pnl)
+        secondary_html = (
+            f"<div class='since-line since-{overall_cls}'>"
+            f"Overall from {money(overall_start)}: {overall_pnl:+,.0f} ({overall_pct:+.2f}%)"
+            f"</div>"
+        )
+
     totaliser_html = ""
     trades_display = row.get("trades", 0)
     if child and int(row.get("totaliser_trades", 0) or 0) > 0:
@@ -914,7 +927,6 @@ def render_row(row, child=False, rank=None):
         totaliser_html = f"<div class='since-line since-{totaliser_cls}'>Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades</div>"
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    # No leading spaces on HTML lines. Indented HTML in st.markdown can render as literal text/code.
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
         f'<div class="bot-topline">'
@@ -923,7 +935,7 @@ def render_row(row, child=False, rank=None):
         f'</div>'
         f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_label}</span>{allocation_text}</div>'
         f'{waiting_line}'
-        f'<div class="since-line since-{pnl_text_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>'
+        f'{secondary_html}'
         f'{totaliser_html}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
         f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
