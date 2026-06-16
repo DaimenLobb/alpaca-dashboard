@@ -102,7 +102,7 @@ BOT_SHEETS = [
         "name": "Fusion 15 Slots",
         "spreadsheet_id": "1WgColG2iURo0zBygjiS6iYQW4if2lDTW3BKDg_rRxrQ",
         "type": "single",
-        "start_equity": 65000.0,
+        "start_equity": DEFAULT_START_EQUITY,
     },
     {
         "name": "Fusion Smart SL",
@@ -889,9 +889,11 @@ def rank_badge(rank):
 
 
 def render_row(row, child=False, rank=None):
-    display_pnl = float(row.get("leaderboard_pnl", row.get("pnl", 0)) or 0)
-    cls = display_card_class(row, child=child)
-    pnl_text_cls = pnl_class(display_pnl)
+    daily_pnl = float(row.get("pnl", 0) or 0)
+    daily_pct = float(row.get("pct", 0) or 0)
+
+    # Card background is daily/live status. Flat daily = grey.
+    cls = pnl_class(daily_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -900,42 +902,41 @@ def render_row(row, child=False, rank=None):
     bot_id_text = f" | bot_id: {row.get('bot_id')}" if child and row.get("bot_id") else ""
     badge_html = f'<span class="rank-badge">{rank_badge(rank)}</span>' if rank else ""
 
-    waiting = is_waiting_for_trading_day()
-    daily_label = "Waiting" if waiting else f'{row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)'
-    waiting_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
-
-    # Main cards: permanent overall score from original starting equity.
-    # Apex child cards: keep the separate realised totaliser line.
+    # Main cards: permanent total equity change from original starting balance.
     if child:
-        secondary_html = ""
+        overall_html = ""
     else:
         overall_start = float(row.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY)
         overall_pnl = float(row.get("equity", 0) or 0) - overall_start
         overall_pct = 0.0 if overall_start == 0 else (overall_pnl / overall_start) * 100
         overall_cls = pnl_class(overall_pnl)
-        secondary_html = (
+        overall_html = (
             f"<div class='since-line since-{overall_cls}'>"
             f"Overall from {money(overall_start)}: {overall_pnl:+,.0f} ({overall_pct:+.2f}%)"
             f"</div>"
         )
 
+    # Apex child cards: realised logged-trade totaliser from the trade tabs.
     totaliser_html = ""
     trades_display = row.get("trades", 0)
     if child and int(row.get("totaliser_trades", 0) or 0) > 0:
         totaliser_pnl = float(row.get("totaliser_pnl", 0) or 0)
         totaliser_cls = pnl_class(totaliser_pnl)
-        totaliser_html = f"<div class='since-line since-{totaliser_cls}'>Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades</div>"
+        totaliser_html = (
+            f"<div class='since-line since-{totaliser_cls}'>"
+            f"Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades"
+            f"</div>"
+        )
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
         f'<div class="bot-topline">'
         f'<div class="{name_class}">{badge_html}{row["bot_name"]}</div>'
-        f'<div class="bot-pnl-{pnl_text_cls}">P/L {display_pnl:+,.0f}</div>'
+        f'<div class="bot-pnl-{cls}">Today {daily_pnl:+,.0f}</div>'
         f'</div>'
-        f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_label}</span>{allocation_text}</div>'
-        f'{waiting_line}'
-        f'{secondary_html}'
+        f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_pnl:+,.0f} ({daily_pct:+.2f}%)</span>{allocation_text}</div>'
+        f'{overall_html}'
         f'{totaliser_html}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
         f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
@@ -999,9 +1000,9 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots — ranked by Today P/L</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — daily status, overall score shown</div>', unsafe_allow_html=True)
 
-# Leaderboard cards: best Today P/L at the top.
+# Cards show daily status; permanent overall score is shown under equity.
 fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
 
 for rank, row in enumerate(fleet_rows, start=1):
@@ -1034,4 +1035,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by today/session P/L. Daily baselines reset automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Right-side Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
