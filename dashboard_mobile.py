@@ -911,25 +911,24 @@ def render_row(row, child=False, rank=None):
     if child and int(row.get("totaliser_trades", 0) or 0) > 0:
         totaliser_pnl = float(row.get("totaliser_pnl", 0) or 0)
         totaliser_cls = pnl_class(totaliser_pnl)
-        totaliser_html = (
-            f"<div class='since-line since-{totaliser_cls}'>"
-            f"Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades"
-            f"</div>"
-        )
+        totaliser_html = f"<div class='since-line since-{totaliser_cls}'>Realised total P/L: {totaliser_pnl:+,.0f} from {int(row.get('totaliser_trades', 0))} trades</div>"
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    card_html = f'''<div class="bot-row bot-row-{cls}{child_class}">
-        <div class="bot-topline">
-            <div class="{name_class}">{badge_html}{row["bot_name"]}</div>
-            <div class="bot-pnl-{pnl_text_cls}">P/L {display_pnl:+,.0f}</div>
-        </div>
-        <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_label}</span>{allocation_text}</div>
-        {waiting_line}
-        <div class="since-line since-{pnl_text_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
-        {totaliser_html}
-        <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>
-        <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
-    </div>'''
+    # No leading spaces on HTML lines. Indented HTML in st.markdown can render as literal text/code.
+    card_html = (
+        f'<div class="bot-row bot-row-{cls}{child_class}">'
+        f'<div class="bot-topline">'
+        f'<div class="{name_class}">{badge_html}{row["bot_name"]}</div>'
+        f'<div class="bot-pnl-{pnl_text_cls}">P/L {display_pnl:+,.0f}</div>'
+        f'</div>'
+        f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_label}</span>{allocation_text}</div>'
+        f'{waiting_line}'
+        f'<div class="since-line since-{pnl_text_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>'
+        f'{totaliser_html}'
+        f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
+        f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
+        f'</div>'
+    )
     st.markdown(card_html, unsafe_allow_html=True)
 
 
