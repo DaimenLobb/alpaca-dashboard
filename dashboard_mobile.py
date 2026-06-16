@@ -1,7 +1,8 @@
 import os
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -357,7 +358,7 @@ def filter_trade_rows(trades, bot_id=None, trade_date=None):
         df["trade_day_et"] = et_times.dt.date
         df["time_et"] = et_times.dt.strftime("%H:%M")
         if trade_date is None:
-            trade_date = df["trade_day_et"].max()
+            trade_date = current_session_date_et()
         df = df[df["trade_day_et"] == trade_date].copy()
     return df
 
@@ -554,7 +555,28 @@ def fmt_time(value):
 
 
 
-BASELINE_FILE = os.path.join(tempfile.gettempdir(), "sleep_check_leaderboard_baselines.json")
+ET = ZoneInfo("America/New_York")
+SESSION_RESET_HOUR_ET = 4
+
+
+def current_session_date_et():
+    """Trading day used for the sleep-check daily P/L.
+
+    The reset happens at the start of the following premarket session.
+    Before 04:00 ET, the app still treats the rows as the prior session;
+    from 04:00 ET onward it starts a new daily baseline.
+    """
+    now = datetime.now(ET)
+    if now.hour < SESSION_RESET_HOUR_ET:
+        return (now - timedelta(days=1)).date()
+    return now.date()
+
+
+def current_session_key():
+    return current_session_date_et().isoformat()
+
+
+BASELINE_FILE = os.path.join(tempfile.gettempdir(), "sleep_check_daily_premarket_baselines_v2.json")
 
 
 def baseline_key(row):
@@ -571,7 +593,7 @@ def load_baselines():
                 return data
     except Exception:
         pass
-    return {"created_at": datetime.now().isoformat(), "baselines": {}}
+    return {"created_at": datetime.now().isoformat(), "session_key": current_session_key(), "baselines": {}}
 
 
 def save_baselines(data):
@@ -592,6 +614,14 @@ def apply_leaderboard_baselines(rows, children_by_group):
     future movement is true P/L per bot/account.
     """
     data = load_baselines()
+    session_key = current_session_key()
+    if data.get("session_key") != session_key:
+        data = {
+            "created_at": datetime.now().isoformat(),
+            "session_key": session_key,
+            "reset_rule": f"Resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket",
+            "baselines": {},
+        }
     baselines = data.setdefault("baselines", {})
     changed = False
 
@@ -782,7 +812,7 @@ def render_row(row, child=False, rank=None):
                 <div class="bot-pnl-{cls}">P/L {display_pnl:+,.0f}</div>
             </div>
             <div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {row["pnl"]:+,.0f} ({row["pct"]:+.2f}%)</span>{allocation_text}</div>
-            <div class="since-line since-{since_cls}">Leaderboard from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
+            <div class="since-line since-{since_cls}">Daily from {money(lb_start)}: {display_pnl:+,.0f} ({lb_pct:+.2f}%)</div>
             <div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {row["trades"]}</span></div>
             <div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>
         </div>''',
@@ -834,7 +864,7 @@ cls = pnl_class(total_pnl)
 since_cls = pnl_class(total_pnl)
 
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Leaderboard P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Daily total {total_daily_pnl:+,.0f} | Baseline file: {os.path.basename(BASELINE_FILE)}</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -844,7 +874,7 @@ with s1:
 with s2:
     st.markdown(f'''<div class="summary-card"><div class="summary-label">Open Risk</div><div class="summary-value" style="font-size:1.35rem;">{total_positions} pos / {total_orders} ord</div></div>''', unsafe_allow_html=True)
 
-st.markdown('<div class="section-title">Bots — ranked by P/L</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Bots — ranked by Today P/L</div>', unsafe_allow_html=True)
 
 # Leaderboard cards: best Today P/L at the top.
 fleet_rows = sorted(fleet_rows, key=lambda r: (float(r.get("leaderboard_pnl", 0) or 0), float(r.get("equity", 0) or 0)), reverse=True)
@@ -872,4 +902,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by realised trade P/L when trade tabs have entries; otherwise by the saved leaderboard baseline. Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by today/session P/L. Daily baselines reset automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
