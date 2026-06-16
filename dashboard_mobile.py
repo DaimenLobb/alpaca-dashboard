@@ -549,21 +549,6 @@ def median_account_total_from_children(children, use_previous=False):
     return (estimates[mid - 1] + estimates[mid]) / 2.0
 
 
-
-def median_account_total_from_child_key(children, key):
-    estimates = []
-    for child in children:
-        frac = allocation_fraction(child.get("allocation"))
-        if frac <= 0:
-            continue
-        value = float(child.get(key, 0) or 0)
-        if value > 0:
-            estimates.append(value / frac)
-    if not estimates:
-        return 0.0
-    return float(pd.Series(estimates).median())
-
-
 def calc_delta(df):
     latest = float(df.iloc[-1].get("equity", 0) or 0)
     previous = float(df.iloc[-2].get("equity", latest) or latest) if len(df) > 1 else latest
@@ -612,36 +597,7 @@ def fmt_time(value):
 
 ET = ZoneInfo("America/New_York")
 SESSION_RESET_HOUR_ET = 4
-BASELINE_VERSION = "v5_overall_baseline_set_once_from_current_values"
-OVERALL_TRACKING_START_ET = pd.Timestamp("2026-06-16 04:00:00", tz="America/New_York")
-
-
-
-def first_equity_after_tracking_start(df, fallback):
-    """Return the first equity snapshot at/after the fixed overall tracking start.
-
-    This makes Overall P/L start from the post-overnight baseline we agreed on,
-    rather than from the old fixed account/allocation numbers.
-    """
-    try:
-        if df is None or df.empty or "timestamp" not in df.columns or "equity" not in df.columns:
-            return float(fallback or 0)
-        work = df.dropna(subset=["timestamp"]).copy()
-        if work.empty:
-            return float(fallback or 0)
-
-        ts = work["timestamp"]
-        if getattr(ts.dt, "tz", None) is None:
-            ts = ts.dt.tz_localize("America/New_York")
-        else:
-            ts = ts.dt.tz_convert("America/New_York")
-        work = work.assign(_ts_et=ts)
-        work = work[work["_ts_et"] >= OVERALL_TRACKING_START_ET].sort_values("_ts_et")
-        if work.empty:
-            return float(fallback or 0)
-        return float(work.iloc[0].get("equity", fallback) or fallback or 0)
-    except Exception:
-        return float(fallback or 0)
+BASELINE_VERSION = "daily_premarket_reset_v3_overall_static_start"
 
 
 def current_session_date_et():
@@ -694,34 +650,22 @@ def save_baselines(data):
 def apply_pnl_metrics(rows, children_by_group):
     """Attach overall and daily P/L metrics to every row.
 
-    Overall P/L:
-        Set once from the current/last-night value and does not reset.
+    overall_pnl keeps running and does not reset. It is based on the configured
+    start_equity for each bot/account.
 
-    Daily P/L:
-        Resets each premarket session at SESSION_RESET_HOUR_ET.
+    daily_pnl resets each premarket session at SESSION_RESET_HOUR_ET.
     """
     data = load_baselines()
     session_key = current_session_key()
-
-    # Changing BASELINE_VERSION intentionally starts a new overall tracking book.
-    # After that, overall_baselines do not reset.
-    if data.get("version") != BASELINE_VERSION:
+    if data.get("session_key") != session_key or data.get("version") != BASELINE_VERSION:
         data = {
             "created_at": datetime.now().isoformat(),
-            "version": BASELINE_VERSION,
             "session_key": session_key,
-            "reset_rule": f"Daily P/L resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket; Overall P/L does not reset",
-            "daily_baselines": {},
-            "overall_baselines": {},
+            "version": BASELINE_VERSION,
+            "reset_rule": f"Daily P/L resets at {SESSION_RESET_HOUR_ET:02d}:00 ET premarket",
+            "baselines": {},
         }
-
-    # Daily baselines reset every session. Overall baselines stay.
-    if data.get("session_key") != session_key:
-        data["session_key"] = session_key
-        data["daily_baselines"] = {}
-
-    daily_baselines = data.setdefault("daily_baselines", {})
-    overall_baselines = data.setdefault("overall_baselines", {})
+    baselines = data.setdefault("baselines", {})
     changed = False
 
     all_rows = list(rows)
@@ -730,27 +674,22 @@ def apply_pnl_metrics(rows, children_by_group):
 
     for row in all_rows:
         equity = float(row.get("equity", 0) or 0)
-        key = baseline_key(row)
 
-        # Overall baseline is set once and never reset for this BASELINE_VERSION.
-        if key not in overall_baselines:
-            overall_baselines[key] = equity
-            changed = True
-        overall_start = float(overall_baselines.get(key, equity) or equity)
+        overall_start = float(row.get("start_equity", equity) or equity)
         row["overall_start"] = overall_start
         row["overall_pnl"] = equity - overall_start
         row["overall_pct"] = 0.0 if overall_start == 0 else ((equity - overall_start) / overall_start) * 100
 
-        # Daily baseline resets each premarket session.
-        if key not in daily_baselines:
-            daily_baselines[key] = equity
+        key = baseline_key(row)
+        if key not in baselines:
+            baselines[key] = equity
             changed = True
-        daily_start = float(daily_baselines.get(key, equity) or equity)
+        daily_start = float(baselines.get(key, equity) or equity)
         row["daily_start"] = daily_start
         row["daily_pnl"] = equity - daily_start
         row["daily_pct"] = 0.0 if daily_start == 0 else ((equity - daily_start) / daily_start) * 100
 
-        # Compatibility for existing render/sort fallbacks.
+        # Compatibility for existing sort/render fallbacks.
         row["leaderboard_start"] = overall_start
         row["leaderboard_pnl"] = row["overall_pnl"]
         row["leaderboard_pct"] = row["overall_pct"]
@@ -792,7 +731,6 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         "tab_name": tab_name,
         "equity": equity,
         "previous_equity": previous_equity,
-        "overall_anchor_equity": first_equity_after_tracking_start(df, equity),
         "pnl": trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl,
         "snapshot_pnl": pnl,
         "pct": (0.0 if previous_equity == 0 else ((trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl) / previous_equity) * 100),
@@ -860,7 +798,6 @@ def make_group_row(config, snapshots, trades):
     latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
     parent_equity = median_account_total_from_children(children, use_previous=False)
     previous_equity = median_account_total_from_children(children, use_previous=True) or parent_equity
-    parent_overall_start = median_account_total_from_child_key(children, "overall_anchor_equity") or parent_equity
     # Daily P/L for Apex should come from the exact bot_id trade tabs when trades exist.
     # This catches the case where bots traded/logged on the trade tabs but snapshots stayed flat.
     trade_parent_pnl = sum(float(c.get("trade_pnl", 0) or 0) for c in children)
@@ -873,7 +810,6 @@ def make_group_row(config, snapshots, trades):
         if frac > 0 and parent_equity > 0:
             child["equity"] = parent_equity * frac
             child["previous_equity"] = previous_equity * frac
-            child["overall_anchor_equity"] = parent_overall_start * frac
             if int(child.get("trades", 0) or 0) <= 0:
                 child["pnl"] = child["equity"] - child["previous_equity"]
             else:
@@ -886,7 +822,6 @@ def make_group_row(config, snapshots, trades):
         "bot_name": config["name"],
         "tab_name": "account total inferred from bot_id allocations",
         "equity": parent_equity,
-        "overall_anchor_equity": parent_overall_start,
         "pnl": parent_pnl,
         "pct": parent_pct,
         "buying_power": parent_bp,
@@ -1035,4 +970,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by overall P/L from the saved current/last-night baseline. Daily P/L resets automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Cards are ranked best-to-worst by overall P/L. Daily P/L resets automatically at the following premarket session (04:00 ET). Tap the trade bar under any bot card to see the logged trades underneath. No checkboxes needed.")
