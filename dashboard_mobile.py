@@ -61,14 +61,12 @@ div[data-testid="stExpander"] summary { color: #f5f7fa !important; font-weight: 
 """, unsafe_allow_html=True)
 
 st.title("Alpaca Fleet Sleep Check")
-st.caption(APP_PATCH_LABEL)
 st.caption("Combined mobile view across separated Google Sheets")
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 # The sheet IDs below came from your launcher .bat files.
 DEFAULT_START_EQUITY = 50000.0
-APP_PATCH_LABEL = "OVERALL LINE 50K START - v2026-06-16 FIXED"
 
 # Apex 50K is one account split across three strategy allocations, not three separate $50k bots.
 APEX_50K_CHILDREN = [
