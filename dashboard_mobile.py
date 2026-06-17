@@ -129,6 +129,42 @@ BOT_SHEETS = [
         "start_equity": DEFAULT_START_EQUITY,
     },
     {
+        "name": "Structure Markov Runner",
+        "spreadsheet_id": "1hvg37r1c51xIO4pIbxfYYAYBuLhCxNapWMJye2OwQrY",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Structure Markov Quality Runner",
+        "spreadsheet_id": "1XNARri_KElpXnybGz-lpPP2tDKFHRjD_0B2T_qTIyUk",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Structure OG",
+        "spreadsheet_id": "1cENU425SU6pzDsCRMjIhhmH2qJ0JtxgAdPpx9eRB3Do",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Fusion OG",
+        "spreadsheet_id": "1O9vr1bKhfNlXgVX5XFZrbyNXiFFQaqIZ1m5oSSUGGIM",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Markov Tech Hunter",
+        "spreadsheet_id": "1LzOtfEqRsqhGuxbrdiCjAXq7mNLwWfpQYKOgf3wUv9Q",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
+        "name": "Markov Scout",
+        "spreadsheet_id": "1UO6F2RU0spc1JxvJUQT5Z38eD5nohmllcZ6wFH80RtU",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+    {
         "name": "Apex 50K 3-Bot Portfolio",
         "spreadsheet_id": "1pgYoFqiWDGLXh-GYCkFQ76oxT8v-kSQJ9EpSJkEAuHk",
         "type": "group",
@@ -623,6 +659,26 @@ def fmt_time(value):
         return str(value)
 
 
+def heartbeat_status(value):
+    """Return a mobile-friendly heartbeat based on latest sheet timestamp."""
+    if pd.isna(value) or value == "":
+        return "🔴 No heartbeat"
+    try:
+        ts = pd.to_datetime(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(ET)
+        else:
+            ts = ts.tz_convert(ET)
+        age_minutes = (datetime.now(ET) - ts).total_seconds() / 60
+        if age_minutes <= 10:
+            return f"🟢 Logging {age_minutes:.0f}m ago"
+        if age_minutes <= 45:
+            return f"🟡 Stale {age_minutes:.0f}m ago"
+        return f"🔴 Old {age_minutes/60:.1f}h ago"
+    except Exception:
+        return "🔴 Bad heartbeat"
+
+
 
 
 ET = ZoneInfo("America/New_York")
@@ -939,7 +995,7 @@ def render_row(row, child=False, rank=None):
         f'{overall_html}'
         f'{totaliser_html}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
-        f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
+        f'<div class="tiny">Heartbeat: {heartbeat_status(row["last_update"])} | Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
         f'</div>'
     )
     st.markdown(card_html, unsafe_allow_html=True)
