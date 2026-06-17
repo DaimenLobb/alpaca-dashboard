@@ -974,11 +974,16 @@ def rank_badge(rank):
 
 
 def render_row(row, child=False, rank=None):
-    daily_pnl = float(row.get("pnl", 0) or 0)
-    daily_pct = float(row.get("pct", 0) or 0)
+    raw_daily_pnl = float(row.get("pnl", 0) or 0)
+    raw_daily_pct = float(row.get("pct", 0) or 0)
 
-    # Card background is daily/live status. Flat daily = grey.
-    cls = pnl_class(daily_pnl)
+    waiting = is_waiting_for_trading_day()
+
+    # Before the trading day starts, show all live/daily values as zero and keep cards grey.
+    daily_pnl = 0.0 if waiting else raw_daily_pnl
+    daily_pct = 0.0 if waiting else raw_daily_pct
+
+    cls = "flat" if waiting else pnl_class(daily_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -1014,6 +1019,8 @@ def render_row(row, child=False, rank=None):
         )
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
+    status_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
+
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
         f'<div class="bot-topline">'
@@ -1023,6 +1030,7 @@ def render_row(row, child=False, rank=None):
         f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_pnl:+,.0f} ({daily_pct:+.2f}%)</span>{allocation_text}</div>'
         f'{overall_html}'
         f'{totaliser_html}'
+        f'{status_line}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
         f'<div class="tiny">{heartbeat_status(row["last_update"])} | Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
         f'</div>'
@@ -1071,11 +1079,12 @@ total_orders = sum(r["orders"] for r in fleet_rows)
 total_start = sum(float(r.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY) for r in fleet_rows)
 total_since = total_equity - total_start
 total_since_pct = 0.0 if total_start == 0 else (total_since / total_start) * 100
-cls = pnl_class(total_pnl)
-since_cls = pnl_class(total_pnl)
+display_total_pnl = 0.0 if is_waiting_for_trading_day() else total_pnl
+cls = pnl_class(display_total_pnl)
+since_cls = pnl_class(display_total_pnl)
 
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {display_total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -1120,4 +1129,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Right-side Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 04:00 ET, Today P/L is forced to +0 and cards stay grey. After 04:00 ET, Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
