@@ -712,6 +712,8 @@ def heartbeat_status(value):
 
 ET = ZoneInfo("America/New_York")
 SESSION_RESET_HOUR_ET = 4
+MARKET_OPEN_HOUR_ET = 9
+MARKET_OPEN_MINUTE_ET = 30
 BASELINE_VERSION = "premarket_v2_strict_fusion15_apex_total"
 
 
@@ -953,9 +955,9 @@ def make_group_row(config, snapshots, trades):
 
 
 def is_waiting_for_trading_day():
-    """Before premarket begins, keep cards visually grey."""
-    return datetime.now(ET).hour < 4
-
+    """Keep daily P/L at zero and cards grey until regular market open."""
+    now = datetime.now(ET)
+    return (now.hour, now.minute) < (MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET)
 
 def display_card_class(row, child=False):
     if is_waiting_for_trading_day():
@@ -1019,7 +1021,7 @@ def render_row(row, child=False, rank=None):
         )
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    status_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
+    status_line = "<div class='tiny'>Status: waiting for market open</div>" if waiting else ""
 
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
@@ -1129,4 +1131,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 04:00 ET, Today P/L is forced to +0 and cards stay grey. After 04:00 ET, Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 09:30 ET, Today P/L is forced to +0 and cards stay grey. After market open, Today P/L shows the current session. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
