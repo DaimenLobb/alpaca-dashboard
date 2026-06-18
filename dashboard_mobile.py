@@ -655,15 +655,35 @@ def fmt_time(value):
 
 
 def heartbeat_status(value):
-    """Return heartbeat status from Google Sheets presence only.
+    """Return timed heartbeat status from latest Google Sheets timestamp.
 
-    This does NOT check timestamp age. If the latest sheet row has any usable
-    timestamp value, the card shows a live heartbeat. If the timestamp cell is
-    blank/missing, it shows no heartbeat.
+    Fusion Portfolio writes to Sheets about every 20-30 seconds while running.
+    The card stays live while the latest timestamp is under 3 minutes old.
+    If the bot stops writing, it turns offline after roughly 3 minutes, plus
+    the Streamlit cache refresh delay.
     """
     if pd.isna(value) or str(value).strip() == "":
-        return "<span class='heartbeat-offline'>💔 NO HEARTBEAT</span>"
-    return "<span class='heartbeat-live'>💚 HEARTBEAT</span>"
+        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
+
+    try:
+        ts = pd.to_datetime(value, errors="coerce")
+        if pd.isna(ts):
+            return "<span class='heartbeat-offline'>💔 BAD HEARTBEAT</span>"
+
+        if getattr(ts, "tzinfo", None) is None:
+            ts = ts.tz_localize(ET)
+        else:
+            ts = ts.tz_convert(ET)
+
+        age_minutes = (datetime.now(ET) - ts).total_seconds() / 60
+
+        if age_minutes <= 3:
+            return "<span class='heartbeat-live'>💚 LIVE</span>"
+
+        return f"<span class='heartbeat-offline'>💔 OFFLINE {age_minutes:.0f}m</span>"
+
+    except Exception:
+        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
 
 
 
