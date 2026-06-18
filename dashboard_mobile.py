@@ -894,13 +894,9 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         "tab_name": tab_name,
         "equity": equity,
         "previous_equity": previous_equity,
-        # Main card daily P/L must come from the parent snapshot/live account value.
-        # Trade rows are only for trade count/dropdown details.
-        # This prevents Fusion 15 showing realised child-trade P/L (-8390)
-        # when Alpaca live daily account P/L is positive.
-        "pnl": pnl,
+        "pnl": trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl,
         "snapshot_pnl": pnl,
-        "pct": (0.0 if previous_equity == 0 else (pnl / previous_equity) * 100),
+        "pct": (0.0 if previous_equity == 0 else ((trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl) / previous_equity) * 100),
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": safe_int(latest.get("open_positions", 0)),
         "orders": safe_int(latest.get("open_orders", 0)),
@@ -985,11 +981,11 @@ def make_group_row(config, snapshots, trades):
     latest_child = max(children, key=lambda r: pd.to_datetime(r["last_update"], errors="coerce") if r["last_update"] != "" else pd.Timestamp.min)
     parent_equity = median_account_total_from_children(children, use_previous=False)
     previous_equity = median_account_total_from_children(children, use_previous=True) or parent_equity
-    # Parent/group card daily P/L comes from snapshots/live account movement only.
-    # Logged trade rows stay available for dropdowns and trade counts.
+    # Daily P/L for Apex should come from the exact bot_id trade tabs when trades exist.
+    # This catches the case where bots traded/logged on the trade tabs but snapshots stayed flat.
     trade_parent_pnl = sum(float(c.get("trade_pnl", 0) or 0) for c in children)
     trade_parent_count = sum(int(c.get("trades", 0) or 0) for c in children)
-    parent_pnl = parent_equity - previous_equity
+    parent_pnl = trade_parent_pnl if trade_parent_count > 0 else (parent_equity - previous_equity)
     parent_pct = 0.0 if previous_equity == 0 else (parent_pnl / previous_equity) * 100
 
     for child in children:
@@ -997,7 +993,10 @@ def make_group_row(config, snapshots, trades):
         if frac > 0 and parent_equity > 0:
             child["equity"] = parent_equity * frac
             child["previous_equity"] = previous_equity * frac
-            child["pnl"] = child["equity"] - child["previous_equity"]
+            if int(child.get("trades", 0) or 0) <= 0:
+                child["pnl"] = child["equity"] - child["previous_equity"]
+            else:
+                child["pnl"] = float(child.get("trade_pnl", 0) or 0)
             child["pct"] = 0.0 if child["previous_equity"] == 0 else (child["pnl"] / child["previous_equity"]) * 100
 
     parent_bp = sum(float(c.get("buying_power", 0) or 0) for c in children)
