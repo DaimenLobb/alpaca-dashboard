@@ -189,6 +189,14 @@ def clean_dataframe(rows):
     if df.empty:
         return df
     df.columns = [str(c).strip() for c in df.columns]
+
+    # Normalize common timestamp header variations so heartbeat works across bots.
+    if "timestamp" not in df.columns:
+        for c in list(df.columns):
+            if str(c).strip().lower() in ("timestamp", "time", "datetime", "date_time", "updated_at", "last_update"):
+                df = df.rename(columns={c: "timestamp"})
+                break
+
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
@@ -376,6 +384,28 @@ def all_trade_rows(trades):
     if "pnl" in out.columns:
         out["pnl"] = pd.to_numeric(out["pnl"], errors="coerce").fillna(0.0)
     return out
+
+
+def sheet_latest_timestamp(snapshots, trades):
+    """Newest timestamp from anywhere in this spreadsheet.
+
+    Some bots update a heartbeat/snapshot tab whose title does not match the
+    display card, or they update trade tabs before the selected snapshot tab.
+    This gives the card a true sheet-level heartbeat.
+    """
+    latest = None
+
+    for df in list((snapshots or {}).values()) + list((trades or {}).values()):
+        if df is None or df.empty or "timestamp" not in df.columns:
+            continue
+        s = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
+        if s.empty:
+            continue
+        m = s.max()
+        if latest is None or m > latest:
+            latest = m
+
+    return latest if latest is not None else ""
 
 
 def filter_trade_rows(trades, bot_id=None, trade_date=None):
@@ -665,7 +695,7 @@ def heartbeat_status(value):
         return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
     try:
         ts = pd.to_datetime(value)
-        if ts.tzinfo is None:
+        if getattr(ts, "tzinfo", None) is None:
             ts = ts.tz_localize(ET)
         else:
             ts = ts.tz_convert(ET)
@@ -838,7 +868,11 @@ def make_single_row(config, snapshots, trades):
         tab_name, df = best_snapshot_for_name(snapshots, config["name"])
     if df is None or df.empty:
         return None
-    return row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
+    row = row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
+    sheet_heartbeat = sheet_latest_timestamp(snapshots, trades)
+    if sheet_heartbeat != "":
+        row["last_update"] = sheet_heartbeat
+    return row
 
 
 def make_group_row(config, snapshots, trades):
@@ -910,7 +944,7 @@ def make_group_row(config, snapshots, trades):
         "buying_power": parent_bp,
         "positions": max((c["positions"] for c in children), default=0),
         "orders": max((c["orders"] for c in children), default=0),
-        "last_update": latest_child.get("last_update", ""),
+        "last_update": sheet_latest_timestamp(snapshots, trades) or latest_child.get("last_update", ""),
         "trades": sum(c["trades"] for c in children),
         "trade_pnl": trade_parent_pnl,
         "trade_rows": pd.concat([c.get("trade_rows", pd.DataFrame()) for c in children if c.get("trade_rows") is not None and not c.get("trade_rows").empty], ignore_index=True) if any(c.get("trade_rows") is not None and not c.get("trade_rows").empty for c in children) else pd.DataFrame(),
