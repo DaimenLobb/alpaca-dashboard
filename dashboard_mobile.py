@@ -101,13 +101,13 @@ APEX_50K_CHILDREN = [
 
 
 BOT_SHEETS = [
-    {
+{
         "name": "Fusion Portfolio",
         "spreadsheet_id": "1fRCRhiJ_5eNwJCBRW9EXwZRW4Gu6WkEXld_a760EiPY",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Fusion 15",
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
@@ -116,79 +116,49 @@ BOT_SHEETS = [
         "source_hints": ["15 MIN", "15MIN", "FUSION15", "FUSION_15", "DELAY"],
         "strict_source_hints": True,
     },
-    {
-        "name": "Fusion Portfolio Slots",
-        "spreadsheet_id": "1dEzsKBSgkezz_s130WJPfJ-TL-KgjwOW-DxTFBkv6F4",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-    {
-        "name": "Fusion 15 Slots",
-        "spreadsheet_id": "1WgColG2iURo0zBygjiS6iYQW4if2lDTW3BKDg_rRxrQ",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-    {
+{
         "name": "Fusion Smart SL",
         "spreadsheet_id": "1AD9Zkr1DRBUl74JbMxdQDbtdeVqV97s-3qac-hiddjo",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Fusion Half Runner",
         "spreadsheet_id": "18OiMDUaOWyF0LhHdmVrJUCUhsQU2bT7o0ArDWaCmLjs",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
-        "name": "Fusion SL Slots",
-        "spreadsheet_id": "1JLXVePIqjy7-FpOE2HMjvM4UxMDNWgEluSgApf2-YME",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-    {
-        "name": "Fusion Runner Slots",
-        "spreadsheet_id": "1qWaOG9xXGdIV-OfqX5JgboWEsZO6_CK2netMu7kHvUk",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-    {
+{
         "name": "Structure Markov Runner",
         "spreadsheet_id": "1hvg37r1c51xIO4pIbxfYYAYBuLhCxNapWMJye2OwQrY",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Structure Markov Quality Runner",
         "spreadsheet_id": "1XNARri_KElpXnybGz-lpPP2tDKFHRjD_0B2T_qTIyUk",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Structure OG",
         "spreadsheet_id": "1cENU425SU6pzDsCRMjIhhmH2qJ0JtxgAdPpx9eRB3Do",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
-        "name": "Fusion OG",
-        "spreadsheet_id": "1O9vr1bKhfNlXgVX5XFZrbyNXiFFQaqIZ1m5oSSUGGIM",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-    {
+{
         "name": "Markov Tech Hunter",
         "spreadsheet_id": "1LzOtfEqRsqhGuxbrdiCjAXq7mNLwWfpQYKOgf3wUv9Q",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Markov Scout",
         "spreadsheet_id": "1UO6F2RU0spc1JxvJUQT5Z38eD5nohmllcZ6wFH80RtU",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
-    {
+{
         "name": "Apex 50K 3-Bot Portfolio",
         "spreadsheet_id": "1pgYoFqiWDGLXh-GYCkFQ76oxT8v-kSQJ9EpSJkEAuHk",
         "type": "group",
@@ -196,6 +166,7 @@ BOT_SHEETS = [
         "children": APEX_50K_CHILDREN,
     },
 ]
+
 
 
 NUMERIC_COLUMNS = [
@@ -712,8 +683,6 @@ def heartbeat_status(value):
 
 ET = ZoneInfo("America/New_York")
 SESSION_RESET_HOUR_ET = 4
-MARKET_OPEN_HOUR_ET = 9
-MARKET_OPEN_MINUTE_ET = 30
 BASELINE_VERSION = "premarket_v2_strict_fusion15_apex_total"
 
 
@@ -955,9 +924,9 @@ def make_group_row(config, snapshots, trades):
 
 
 def is_waiting_for_trading_day():
-    """Keep daily P/L at zero and cards grey until regular market open."""
-    now = datetime.now(ET)
-    return (now.hour, now.minute) < (MARKET_OPEN_HOUR_ET, MARKET_OPEN_MINUTE_ET)
+    """Before premarket begins, keep cards visually grey."""
+    return datetime.now(ET).hour < 4
+
 
 def display_card_class(row, child=False):
     if is_waiting_for_trading_day():
@@ -1021,7 +990,7 @@ def render_row(row, child=False, rank=None):
         )
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    status_line = "<div class='tiny'>Status: waiting for market open</div>" if waiting else ""
+    status_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
 
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
@@ -1131,4 +1100,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 09:30 ET, Today P/L is forced to +0 and cards stay grey. After market open, Today P/L shows the current session. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 04:00 ET, Today P/L is forced to +0 and cards stay grey. After 04:00 ET, Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
