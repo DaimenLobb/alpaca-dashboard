@@ -175,17 +175,19 @@ BOT_SHEETS = [
         "card_pnl_source": "snapshot",
     },
 {
-    "name": "Markov Tech Hunter",
-    "spreadsheet_id": "1LzOtfEqRsqhGuxbrdiCjAXq7mNLwWfpQYKOgf3wUv9Q",
-    "type": "single",
-    "start_equity": DEFAULT_START_EQUITY,
-    "source_hints": [
-        "APEX MARKOV TECH HUNTER PAPER ACCOUNT",
-        "Markov Tech Hunter",
-    ],
-    "strict_source_hints": False,
-    "trade_child_ids": TRADE_CHILDREN["MARKOV_TECH_HUNTER"],
-    "card_pnl_source": "snapshot",
+        "name": "Markov Tech Hunter",
+        "spreadsheet_id": "1LzOtfEqRsqhGuxbrdiCjAXq7mNLwWfpQYKOgf3wUv9Q",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+        "source_hints": [
+            "APEX MARKOV TECH HUNTER PAPER ACCOUNT",
+            "Markov Tech Hunter",
+        ],
+        "strict_source_hints": False,
+        # Snapshot rows have no stable bot_id, so do not filter the heartbeat by bot_id.
+        # Trade rows are still read from the trade-like Sheet2 tab below.
+        "trade_child_ids": TRADE_CHILDREN["MARKOV_TECH_HUNTER"],
+        "card_pnl_source": "snapshot",
     },
 {
         "name": "Structure OG",
@@ -294,8 +296,21 @@ def load_spreadsheet(spreadsheet_id):
 
         title = ws.title.strip()
         title_lower = title.lower()
-        if "trade" in title_lower:
+
+        # Treat sheets as trade tabs either by name OR by trade-row columns.
+        # Some bots, including Markov Tech Hunter, have a trade tab named "Sheet2".
+        trade_like_cols = {"timestamp", "account_name", "symbol", "side", "qty", "pnl", "trade_id"}
+        is_trade_like_sheet = trade_like_cols.issubset(set(df.columns))
+
+        if "trade" in title_lower or is_trade_like_sheet:
             clean_title = title.replace("(Legacy)", "").replace("Trades", "").replace("trades", "").strip()
+            if clean_title.lower().startswith("sheet") and "account_name" in df.columns:
+                try:
+                    account_names = [str(x).strip() for x in df["account_name"].dropna().unique() if str(x).strip()]
+                    if account_names:
+                        clean_title = account_names[0]
+                except Exception:
+                    pass
             trades[clean_title] = df
             continue
 
@@ -422,6 +437,8 @@ def all_trade_rows(trades):
         out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
     if "pnl" in out.columns:
         out["pnl"] = pd.to_numeric(out["pnl"], errors="coerce").fillna(0.0)
+    if "trade_id" in out.columns:
+        out = out.drop_duplicates(subset=["trade_id"], keep="last")
     return out
 
 
