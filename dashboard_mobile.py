@@ -198,7 +198,7 @@ def clean_dataframe(rows):
     return df
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_spreadsheet(spreadsheet_id):
     """Load one Google spreadsheet with very few Sheets API read requests.
 
@@ -655,30 +655,16 @@ def fmt_time(value):
 
 
 def heartbeat_status(value):
-    """Return animated heartbeat status from latest sheet timestamp.
+    """Return heartbeat status from Google Sheets presence only.
 
-    💚 LIVE pulses when the sheet has logged in the last 5 minutes.
-    💛 STALE means 5-45 minutes.
-    💔 OFFLINE means older than 45 minutes or no usable timestamp.
+    This does NOT check timestamp age. If the latest sheet row has any usable
+    timestamp value, the card shows a live heartbeat. If the timestamp cell is
+    blank/missing, it shows no heartbeat.
     """
-    if pd.isna(value) or value == "":
-        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
-    try:
-        ts = pd.to_datetime(value)
-        if getattr(ts, "tzinfo", None) is None:
-            ts = ts.tz_localize(ET)
-        else:
-            ts = ts.tz_convert(ET)
+    if pd.isna(value) or str(value).strip() == "":
+        return "<span class='heartbeat-offline'>💔 NO HEARTBEAT</span>"
+    return "<span class='heartbeat-live'>💚 HEARTBEAT</span>"
 
-        age_minutes = (datetime.now(ET) - ts).total_seconds() / 60
-
-        if age_minutes <= 5:
-            return "<span class='heartbeat-live'>💚 LIVE</span>"
-        if age_minutes <= 45:
-            return f"<span class='heartbeat-stale'>💛 STALE {age_minutes:.0f}m</span>"
-        return f"<span class='heartbeat-offline'>💔 OFFLINE {age_minutes/60:.1f}h</span>"
-    except Exception:
-        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
 
 
 
