@@ -99,6 +99,14 @@ APEX_50K_CHILDREN = [
     {"name": "QUALITY SIZER", "bot_id": "QUALITY_SIZER", "start_equity": 10000.0, "allocation": "20%"},
 ]
 
+# Parent-card trade rollups.
+# The heartbeat row for a Fusion parent can use a parent bot_id, while completed
+# trades are logged by engine/child bot_id. These child ids are counted into the
+# parent card and also shown as child sections inside the trade dropdown.
+TRADE_CHILDREN = {
+    "FUSION_HALF_RUNNER": ["METALS_ORB", "STRUCTURE_ORB", "QUALITY_SIZER"],
+}
+
 
 BOT_SHEETS = [
 {
@@ -122,9 +130,8 @@ BOT_SHEETS = [
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
-        # Prevent this card from accidentally picking up the normal Fusion Portfolio tab.
-        "source_hints": ["15 MIN", "15MIN", "FUSION15", "FUSION_15", "DELAY"],
-        "strict_source_hints": True,
+        # Exact bot_id match prevents this card from picking an older/wrong tab.
+        "bot_id": "FUSION_PORTFOLIO_15",
     },
 {
         "name": "Fusion Smart SL",
@@ -137,6 +144,8 @@ BOT_SHEETS = [
         "spreadsheet_id": "18OiMDUaOWyF0LhHdmVrJUCUhsQU2bT7o0ArDWaCmLjs",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
+        "bot_id": "FUSION_HALF_RUNNER",
+        "trade_child_ids": TRADE_CHILDREN["FUSION_HALF_RUNNER"],
     },
 {
         "name": "Markov Scout",
@@ -388,13 +397,24 @@ def all_trade_rows(trades):
     return out
 
 
-def filter_trade_rows(trades, bot_id=None, trade_date=None):
+def _normalised_id_list(bot_id=None, bot_ids=None):
+    values = []
+    if bot_ids:
+        values.extend(bot_ids)
+    elif bot_id:
+        values.append(bot_id)
+    return [norm(v) for v in values if str(v).strip()]
+
+
+def filter_trade_rows(trades, bot_id=None, bot_ids=None, trade_date=None):
     df = all_trade_rows(trades)
     if df.empty:
         return df
-    if bot_id and "bot_id" in df.columns:
-        wanted = norm(bot_id)
-        df = df[df["bot_id"].astype(str).map(norm) == wanted].copy()
+
+    wanted_ids = _normalised_id_list(bot_id=bot_id, bot_ids=bot_ids)
+    if wanted_ids and "bot_id" in df.columns:
+        df = df[df["bot_id"].astype(str).map(norm).isin(wanted_ids)].copy()
+
     if df.empty:
         return df
     if "timestamp" in df.columns:
@@ -407,8 +427,8 @@ def filter_trade_rows(trades, bot_id=None, trade_date=None):
     return df
 
 
-def trade_pnl_and_rows(trades, bot_id=None, trade_date=None):
-    df = filter_trade_rows(trades, bot_id=bot_id, trade_date=trade_date)
+def trade_pnl_and_rows(trades, bot_id=None, bot_ids=None, trade_date=None):
+    df = filter_trade_rows(trades, bot_id=bot_id, bot_ids=bot_ids, trade_date=trade_date)
     if df.empty or "pnl" not in df.columns:
         return 0.0, df
     return float(df["pnl"].sum()), df
@@ -497,6 +517,20 @@ def render_trade_details(row, key_prefix=""):
         f"<div class='tiny'><b>Trades {trade_day}</b> | Total realised P/L {trade_pnl:+,.2f}</div>" + trade_table_html(trades_df),
         unsafe_allow_html=True,
     )
+
+    # Parent bot child trade breakdown. Do not use nested Streamlit expanders here;
+    # this function already runs inside the bot's trade dropdown.
+    child_ids = row.get("trade_child_ids") or []
+    if child_ids and "bot_id" in trades_df.columns:
+        for child_id in child_ids:
+            child_df = trades_df[trades_df["bot_id"].astype(str).map(norm) == norm(child_id)].copy()
+            if child_df.empty:
+                continue
+            child_pnl = float(child_df["pnl"].sum()) if "pnl" in child_df.columns else 0.0
+            st.markdown(
+                f"<div class='tiny' style='margin-top:12px;'><b>{child_id} child trades</b> | {len(child_df)} trades | P/L {child_pnl:+,.2f}</div>" + trade_table_html(child_df),
+                unsafe_allow_html=True,
+            )
 
 
 def newest_time_from_df(df):
@@ -810,7 +844,7 @@ def trade_count(trades, tab_name, bot_id=None):
     return len(df)
 
 
-def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None):
+def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None, trade_child_ids=None):
     equity, pnl, pct = calc_delta(df)
     previous_equity = equity - pnl
     latest = df.iloc[-1]
@@ -819,11 +853,18 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
 
     # Trade matching rule:
     # - Apex 50K child rows pass bot_id explicitly, so filter by that exact bot_id.
-    # - Single-bot Fusion sheets should use all trades from their own spreadsheet, even
-    #   when the snapshot row has a bot_id. Some Fusion trade tabs either have no
-    #   bot_id or use a different logger value, and filtering hid those trades.
-    trade_filter_bot_id = bot_id if bot_id else None
-    trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_id=trade_filter_bot_id)
+    # - Fusion parent rows can have child engines that log their own bot_id. For those,
+    #   count parent + child ids into the parent card and show child sections below.
+    # - Other single-bot Fusion sheets with no explicit bot_id still use all trades from
+    #   their own spreadsheet because older trade tabs sometimes had no stable bot_id.
+    trade_child_ids = list(trade_child_ids or [])
+    trade_filter_bot_ids = None
+    if bot_id and trade_child_ids:
+        trade_filter_bot_ids = [bot_id] + trade_child_ids
+    elif bot_id:
+        trade_filter_bot_ids = [bot_id]
+
+    trade_pnl, trade_rows = trade_pnl_and_rows(trades, bot_ids=trade_filter_bot_ids)
     trade_day = ""
     if trade_rows is not None and not trade_rows.empty and "trade_day_et" in trade_rows.columns:
         trade_day = str(trade_rows["trade_day_et"].max())
@@ -843,6 +884,7 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         "trade_pnl": trade_pnl,
         "trade_rows": trade_rows,
         "trade_day": trade_day,
+        "trade_child_ids": trade_child_ids,
         "detail_only": detail_only,
         "start_equity": float(start_equity or DEFAULT_START_EQUITY),
         "bot_id": actual_bot_id,
@@ -851,7 +893,11 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
 
 
 def make_single_row(config, snapshots, trades):
-    if config.get("source_hints"):
+    # Prefer an exact bot_id match when supplied. This avoids name/tab clashes
+    # between Fusion Portfolio and Fusion 15 when both use similar worksheet names.
+    if config.get("bot_id"):
+        tab_name, df = filter_snapshot_by_bot_id(snapshots, config["bot_id"])
+    elif config.get("source_hints"):
         tab_name, df = best_snapshot_by_hints(
             snapshots,
             config.get("source_hints"),
@@ -859,9 +905,19 @@ def make_single_row(config, snapshots, trades):
         )
     else:
         tab_name, df = best_snapshot_for_name(snapshots, config["name"])
+
     if df is None or df.empty:
         return None
-    return row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
+
+    return row_from_snapshot(
+        config["name"],
+        tab_name,
+        df,
+        trades,
+        start_equity=config.get("start_equity", DEFAULT_START_EQUITY),
+        bot_id=config.get("bot_id"),
+        trade_child_ids=config.get("trade_child_ids"),
+    )
 
 
 def make_group_row(config, snapshots, trades):
