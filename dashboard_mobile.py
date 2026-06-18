@@ -128,6 +128,8 @@ BOT_SHEETS = [
             "QUALITY_SIZER",
         ],
         "strict_source_hints": False,
+        # Use broker-source daily P/L from the bot snapshot when available.
+        "card_pnl_source": "snapshot",
     },
 {
         "name": "Fusion 15",
@@ -870,16 +872,6 @@ def trade_count(trades, tab_name, bot_id=None):
 
 
 def snapshot_card_pnl(latest, fallback_pnl):
-    """
-    Preferred source for main card Today/Daily P/L.
-
-    If the bot writes Alpaca account fields, use them:
-      daily_pl_alpaca / alpaca_daily_pl / daily_pnl
-    or compute:
-      equity - last_equity
-
-    Otherwise fall back to existing snapshot delta.
-    """
     try:
         for key in ("daily_pl_alpaca", "alpaca_daily_pl", "daily_pnl", "daily_pl"):
             if key in latest and str(latest.get(key, "")).strip() not in ("", "nan", "None", "-"):
@@ -888,12 +880,8 @@ def snapshot_card_pnl(latest, fallback_pnl):
         pass
 
     try:
-        equity_val = latest.get("equity", None)
-        last_eq_val = None
-        for key in ("last_equity", "previous_equity", "prev_equity", "yesterday_equity"):
-            if key in latest and str(latest.get(key, "")).strip() not in ("", "nan", "None", "-"):
-                last_eq_val = latest.get(key)
-                break
+        equity_val = latest.get("alpaca_equity", latest.get("equity", None))
+        last_eq_val = latest.get("alpaca_last_equity", latest.get("last_equity", None))
         if equity_val is not None and last_eq_val is not None:
             equity_f = float(str(equity_val).replace("$", "").replace(",", ""))
             last_f = float(str(last_eq_val).replace("$", "").replace(",", ""))
@@ -988,6 +976,7 @@ def make_single_row(config, snapshots, trades):
         start_equity=config.get("start_equity", DEFAULT_START_EQUITY),
         bot_id=config.get("bot_id"),
         trade_child_ids=config.get("trade_child_ids"),
+        card_pnl_source=config.get("card_pnl_source", "trades_if_present"),
         card_pnl_source=config.get("card_pnl_source", "trades_if_present"),
     )
 
