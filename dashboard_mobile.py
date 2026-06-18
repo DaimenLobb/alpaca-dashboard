@@ -57,6 +57,30 @@ div[data-testid="stExpander"] summary { color: #f5f7fa !important; font-weight: 
 .trade-card-flat { background: rgba(96,125,139,0.16); border-left: 5px solid #b0bec5; }
 .trade-card-top { display: flex; justify-content: space-between; gap: 10px; color: #f5f7fa; font-size: 0.82rem; font-weight: 900; }
 .trade-card-sub { color: #d6e2ea; font-size: 0.70rem; font-weight: 700; margin-top: 5px; }
+
+.heartbeat-live {
+    display: inline-block;
+    color: #00e676;
+    font-weight: 900;
+    animation: pulse-heart 2s infinite;
+    transform-origin: center;
+}
+.heartbeat-stale {
+    color: #ffd54f;
+    font-weight: 900;
+}
+.heartbeat-offline {
+    color: #ff5252;
+    font-weight: 900;
+}
+@keyframes pulse-heart {
+    0%   { transform: scale(1); }
+    25%  { transform: scale(1.12); }
+    50%  { transform: scale(1.28); }
+    75%  { transform: scale(1.12); }
+    100% { transform: scale(1); }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -630,6 +654,34 @@ def fmt_time(value):
         return str(value)
 
 
+def heartbeat_status(value):
+    """Return animated heartbeat status from latest sheet timestamp.
+
+    💚 LIVE pulses when the sheet has logged in the last 5 minutes.
+    💛 STALE means 5-45 minutes.
+    💔 OFFLINE means older than 45 minutes or no usable timestamp.
+    """
+    if pd.isna(value) or value == "":
+        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
+    try:
+        ts = pd.to_datetime(value)
+        if getattr(ts, "tzinfo", None) is None:
+            ts = ts.tz_localize(ET)
+        else:
+            ts = ts.tz_convert(ET)
+
+        age_minutes = (datetime.now(ET) - ts).total_seconds() / 60
+
+        if age_minutes <= 5:
+            return "<span class='heartbeat-live'>💚 LIVE</span>"
+        if age_minutes <= 45:
+            return f"<span class='heartbeat-stale'>💛 STALE {age_minutes:.0f}m</span>"
+        return f"<span class='heartbeat-offline'>💔 OFFLINE {age_minutes/60:.1f}h</span>"
+    except Exception:
+        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
+
+
+
 
 
 ET = ZoneInfo("America/New_York")
@@ -946,7 +998,7 @@ def render_row(row, child=False, rank=None):
         f'{overall_html}'
         f'{totaliser_html}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
-        f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
+        f'<div class="tiny">{heartbeat_status(row["last_update"])} | Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
         f'</div>'
     )
     st.markdown(card_html, unsafe_allow_html=True)
