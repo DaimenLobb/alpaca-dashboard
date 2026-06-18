@@ -918,7 +918,6 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         trade_day = str(trade_rows["trade_day_et"].max())
 
     # Default behaviour is unchanged from v3.
-    # Only configs with card_pnl_source='snapshot' use snapshot/Alpaca card P/L.
     card_snapshot_pnl = snapshot_card_pnl(latest, pnl)
     if str(card_pnl_source).lower() == "snapshot":
         card_pnl = card_snapshot_pnl
@@ -976,7 +975,6 @@ def make_single_row(config, snapshots, trades):
         start_equity=config.get("start_equity", DEFAULT_START_EQUITY),
         bot_id=config.get("bot_id"),
         trade_child_ids=config.get("trade_child_ids"),
-        card_pnl_source=config.get("card_pnl_source", "trades_if_present"),
         card_pnl_source=config.get("card_pnl_source", "trades_if_present"),
     )
 
