@@ -105,6 +105,10 @@ APEX_50K_CHILDREN = [
 # parent card and also shown as child sections inside the trade dropdown.
 TRADE_CHILDREN = {
     "FUSION_HALF_RUNNER": ["METALS_ORB", "STRUCTURE_ORB", "QUALITY_SIZER"],
+    # Fusion 15 currently logs its heartbeat/trades under engine ids, especially QUALITY_SIZER.
+    "FUSION_15": ["QUALITY_SIZER", "METALS_ORB", "STRUCTURE_ORB"],
+    # Tech Hunter variants seen across bot/logger naming. Harmless if some have no rows.
+    "MARKOV_TECH_HUNTER": ["TECH_HUNTER", "MARKOV_TECH_HUNTER", "APEX_MARKOV_TECH_HUNTER"],
 }
 
 
@@ -130,8 +134,17 @@ BOT_SHEETS = [
         "spreadsheet_id": "1jP2KCG06Ai0PcZ9_zjcZ6sOx0srv_ZoUVWujvnfZDmk",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
-        # Exact bot_id match prevents this card from picking an older/wrong tab.
-        "bot_id": "FUSION_PORTFOLIO_15",
+        # The live bot is writing bot_id=QUALITY_SIZER, so do not require the old
+        # FUSION_PORTFOLIO_15 id. Use source hints to select the newest row in
+        # this Fusion 15 spreadsheet, then roll engine trades into the dropdown.
+        "source_hints": [
+            "APEX FUSION PORTFOLIO 15 MIN DELAY PAPER BOT",
+            "QUALITY_SIZER",
+            "METALS_ORB",
+            "STRUCTURE_ORB",
+        ],
+        "strict_source_hints": False,
+        "trade_child_ids": TRADE_CHILDREN["FUSION_15"],
     },
 {
         "name": "Fusion Smart SL",
@@ -158,6 +171,14 @@ BOT_SHEETS = [
         "spreadsheet_id": "1LzOtfEqRsqhGuxbrdiCjAXq7mNLwWfpQYKOgf3wUv9Q",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
+        "bot_id": "MARKOV_TECH_HUNTER",
+        "source_hints": [
+            "APEX MARKOV TECH HUNTER PAPER ACCOUNT",
+            "MARKOV_TECH_HUNTER",
+            "TECH_HUNTER",
+        ],
+        "strict_source_hints": False,
+        "trade_child_ids": TRADE_CHILDREN["MARKOV_TECH_HUNTER"],
     },
 {
         "name": "Structure OG",
