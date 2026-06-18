@@ -894,9 +894,11 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
         "tab_name": tab_name,
         "equity": equity,
         "previous_equity": previous_equity,
-        "pnl": trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl,
+        # Card Today/Daily must stay tied to the live snapshot.
+        # Trade P/L stays available in trade_pnl/trade_rows for dropdowns only.
+        "pnl": pnl,
         "snapshot_pnl": pnl,
-        "pct": (0.0 if previous_equity == 0 else ((trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl) / previous_equity) * 100),
+        "pct": (0.0 if previous_equity == 0 else (pnl / previous_equity) * 100),
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": safe_int(latest.get("open_positions", 0)),
         "orders": safe_int(latest.get("open_orders", 0)),
