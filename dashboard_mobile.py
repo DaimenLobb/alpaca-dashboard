@@ -145,6 +145,9 @@ BOT_SHEETS = [
         ],
         "strict_source_hints": False,
         "trade_child_ids": TRADE_CHILDREN["FUSION_15"],
+        # Card daily P/L must come from Alpaca/account snapshot, not child trade rows.
+        # Child trades remain visible/countable in the dropdown.
+        "card_pnl_source": "snapshot",
     },
 {
         "name": "Fusion Smart SL",
@@ -865,7 +868,43 @@ def trade_count(trades, tab_name, bot_id=None):
     return len(df)
 
 
-def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None, trade_child_ids=None):
+
+def snapshot_card_pnl(latest, fallback_pnl):
+    """
+    Preferred source for main card Today/Daily P/L.
+
+    If the bot writes Alpaca account fields, use them:
+      daily_pl_alpaca / alpaca_daily_pl / daily_pnl
+    or compute:
+      equity - last_equity
+
+    Otherwise fall back to existing snapshot delta.
+    """
+    try:
+        for key in ("daily_pl_alpaca", "alpaca_daily_pl", "daily_pnl", "daily_pl"):
+            if key in latest and str(latest.get(key, "")).strip() not in ("", "nan", "None", "-"):
+                return float(str(latest.get(key)).replace("$", "").replace(",", ""))
+    except Exception:
+        pass
+
+    try:
+        equity_val = latest.get("equity", None)
+        last_eq_val = None
+        for key in ("last_equity", "previous_equity", "prev_equity", "yesterday_equity"):
+            if key in latest and str(latest.get(key, "")).strip() not in ("", "nan", "None", "-"):
+                last_eq_val = latest.get(key)
+                break
+        if equity_val is not None and last_eq_val is not None:
+            equity_f = float(str(equity_val).replace("$", "").replace(",", ""))
+            last_f = float(str(last_eq_val).replace("$", "").replace(",", ""))
+            return equity_f - last_f
+    except Exception:
+        pass
+
+    return fallback_pnl
+
+
+def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, start_equity=DEFAULT_START_EQUITY, bot_id=None, allocation=None, trade_child_ids=None, card_pnl_source='trades_if_present'):
     equity, pnl, pct = calc_delta(df)
     previous_equity = equity - pnl
     latest = df.iloc[-1]
@@ -889,14 +928,25 @@ def row_from_snapshot(display_name, tab_name, df, trades, detail_only=False, sta
     trade_day = ""
     if trade_rows is not None and not trade_rows.empty and "trade_day_et" in trade_rows.columns:
         trade_day = str(trade_rows["trade_day_et"].max())
+
+    # Default behaviour is unchanged from v3.
+    # Only configs with card_pnl_source='snapshot' use snapshot/Alpaca card P/L.
+    card_snapshot_pnl = snapshot_card_pnl(latest, pnl)
+    if str(card_pnl_source).lower() == "snapshot":
+        card_pnl = card_snapshot_pnl
+    else:
+        card_pnl = trade_pnl if trade_count_for_rows(trade_rows) > 0 else card_snapshot_pnl
+
+    card_pct = 0.0 if previous_equity == 0 else (card_pnl / previous_equity) * 100
+
     return {
         "bot_name": display_name,
         "tab_name": tab_name,
         "equity": equity,
         "previous_equity": previous_equity,
-        "pnl": trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl,
-        "snapshot_pnl": pnl,
-        "pct": (0.0 if previous_equity == 0 else ((trade_pnl if trade_count_for_rows(trade_rows) > 0 else pnl) / previous_equity) * 100),
+        "pnl": card_pnl,
+        "snapshot_pnl": card_snapshot_pnl,
+        "pct": card_pct,
         "buying_power": float(latest.get("buying_power", 0) or 0),
         "positions": safe_int(latest.get("open_positions", 0)),
         "orders": safe_int(latest.get("open_orders", 0)),
@@ -938,6 +988,7 @@ def make_single_row(config, snapshots, trades):
         start_equity=config.get("start_equity", DEFAULT_START_EQUITY),
         bot_id=config.get("bot_id"),
         trade_child_ids=config.get("trade_child_ids"),
+        card_pnl_source=config.get("card_pnl_source", "trades_if_present"),
     )
 
 
