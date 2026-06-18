@@ -57,30 +57,6 @@ div[data-testid="stExpander"] summary { color: #f5f7fa !important; font-weight: 
 .trade-card-flat { background: rgba(96,125,139,0.16); border-left: 5px solid #b0bec5; }
 .trade-card-top { display: flex; justify-content: space-between; gap: 10px; color: #f5f7fa; font-size: 0.82rem; font-weight: 900; }
 .trade-card-sub { color: #d6e2ea; font-size: 0.70rem; font-weight: 700; margin-top: 5px; }
-
-.heartbeat-live {
-    display: inline-block;
-    color: #00e676;
-    font-weight: 900;
-    animation: pulse-heart 2s infinite;
-    transform-origin: center;
-}
-.heartbeat-stale {
-    color: #ffd54f;
-    font-weight: 900;
-}
-.heartbeat-offline {
-    color: #ff5252;
-    font-weight: 900;
-}
-@keyframes pulse-heart {
-    0%   { transform: scale(1); }
-    25%  { transform: scale(1.12); }
-    50%  { transform: scale(1.28); }
-    75%  { transform: scale(1.12); }
-    100% { transform: scale(1); }
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -129,20 +105,8 @@ BOT_SHEETS = [
         "start_equity": DEFAULT_START_EQUITY,
     },
 {
-        "name": "Structure Markov Runner",
-        "spreadsheet_id": "1hvg37r1c51xIO4pIbxfYYAYBuLhCxNapWMJye2OwQrY",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-{
-        "name": "Structure Markov Quality Runner",
-        "spreadsheet_id": "1XNARri_KElpXnybGz-lpPP2tDKFHRjD_0B2T_qTIyUk",
-        "type": "single",
-        "start_equity": DEFAULT_START_EQUITY,
-    },
-{
-        "name": "Structure OG",
-        "spreadsheet_id": "1cENU425SU6pzDsCRMjIhhmH2qJ0JtxgAdPpx9eRB3Do",
+        "name": "Markov Scout",
+        "spreadsheet_id": "1UO6F2RU0spc1JxvJUQT5Z38eD5nohmllcZ6wFH80RtU",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
@@ -153,8 +117,20 @@ BOT_SHEETS = [
         "start_equity": DEFAULT_START_EQUITY,
     },
 {
-        "name": "Markov Scout",
-        "spreadsheet_id": "1UO6F2RU0spc1JxvJUQT5Z38eD5nohmllcZ6wFH80RtU",
+        "name": "Structure OG",
+        "spreadsheet_id": "1cENU425SU6pzDsCRMjIhhmH2qJ0JtxgAdPpx9eRB3Do",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+{
+        "name": "Structure Markov Runner",
+        "spreadsheet_id": "1hvg37r1c51xIO4pIbxfYYAYBuLhCxNapWMJye2OwQrY",
+        "type": "single",
+        "start_equity": DEFAULT_START_EQUITY,
+    },
+{
+        "name": "Structure Quality Runner",
+        "spreadsheet_id": "1XNARri_KElpXnybGz-lpPP2tDKFHRjD_0B2T_qTIyUk",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
     },
@@ -189,14 +165,6 @@ def clean_dataframe(rows):
     if df.empty:
         return df
     df.columns = [str(c).strip() for c in df.columns]
-
-    # Normalize common timestamp header variations so heartbeat works across bots.
-    if "timestamp" not in df.columns:
-        for c in list(df.columns):
-            if str(c).strip().lower() in ("timestamp", "time", "datetime", "date_time", "updated_at", "last_update"):
-                df = df.rename(columns={c: "timestamp"})
-                break
-
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df = df.dropna(subset=["timestamp"]).sort_values("timestamp")
@@ -384,28 +352,6 @@ def all_trade_rows(trades):
     if "pnl" in out.columns:
         out["pnl"] = pd.to_numeric(out["pnl"], errors="coerce").fillna(0.0)
     return out
-
-
-def sheet_latest_timestamp(snapshots, trades):
-    """Newest timestamp from anywhere in this spreadsheet.
-
-    Some bots update a heartbeat/snapshot tab whose title does not match the
-    display card, or they update trade tabs before the selected snapshot tab.
-    This gives the card a true sheet-level heartbeat.
-    """
-    latest = None
-
-    for df in list((snapshots or {}).values()) + list((trades or {}).values()):
-        if df is None or df.empty or "timestamp" not in df.columns:
-            continue
-        s = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
-        if s.empty:
-            continue
-        m = s.max()
-        if latest is None or m > latest:
-            latest = m
-
-    return latest if latest is not None else ""
 
 
 def filter_trade_rows(trades, bot_id=None, trade_date=None):
@@ -684,31 +630,6 @@ def fmt_time(value):
         return str(value)
 
 
-def heartbeat_status(value):
-    """Return animated heartbeat status from latest sheet timestamp.
-
-    💚 LIVE pulses when the sheet has logged in the last 5 minutes.
-    💛 STALE means 5-45 minutes.
-    💔 OFFLINE means older than 45 minutes or no usable timestamp.
-    """
-    if pd.isna(value) or value == "":
-        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
-    try:
-        ts = pd.to_datetime(value)
-        if getattr(ts, "tzinfo", None) is None:
-            ts = ts.tz_localize(ET)
-        else:
-            ts = ts.tz_convert(ET)
-
-        age_minutes = (datetime.now(ET) - ts).total_seconds() / 60
-
-        if age_minutes <= 5:
-            return "<span class='heartbeat-live'>💚 LIVE</span>"
-        if age_minutes <= 45:
-            return f"<span class='heartbeat-stale'>💛 STALE {age_minutes:.0f}m</span>"
-        return f"<span class='heartbeat-offline'>💔 OFFLINE {age_minutes/60:.1f}h</span>"
-    except Exception:
-        return "<span class='heartbeat-offline'>💔 OFFLINE</span>"
 
 
 ET = ZoneInfo("America/New_York")
@@ -868,11 +789,7 @@ def make_single_row(config, snapshots, trades):
         tab_name, df = best_snapshot_for_name(snapshots, config["name"])
     if df is None or df.empty:
         return None
-    row = row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
-    sheet_heartbeat = sheet_latest_timestamp(snapshots, trades)
-    if sheet_heartbeat != "":
-        row["last_update"] = sheet_heartbeat
-    return row
+    return row_from_snapshot(config["name"], tab_name, df, trades, start_equity=config.get("start_equity", DEFAULT_START_EQUITY))
 
 
 def make_group_row(config, snapshots, trades):
@@ -944,7 +861,7 @@ def make_group_row(config, snapshots, trades):
         "buying_power": parent_bp,
         "positions": max((c["positions"] for c in children), default=0),
         "orders": max((c["orders"] for c in children), default=0),
-        "last_update": sheet_latest_timestamp(snapshots, trades) or latest_child.get("last_update", ""),
+        "last_update": latest_child.get("last_update", ""),
         "trades": sum(c["trades"] for c in children),
         "trade_pnl": trade_parent_pnl,
         "trade_rows": pd.concat([c.get("trade_rows", pd.DataFrame()) for c in children if c.get("trade_rows") is not None and not c.get("trade_rows").empty], ignore_index=True) if any(c.get("trade_rows") is not None and not c.get("trade_rows").empty for c in children) else pd.DataFrame(),
@@ -979,16 +896,11 @@ def rank_badge(rank):
 
 
 def render_row(row, child=False, rank=None):
-    raw_daily_pnl = float(row.get("pnl", 0) or 0)
-    raw_daily_pct = float(row.get("pct", 0) or 0)
+    daily_pnl = float(row.get("pnl", 0) or 0)
+    daily_pct = float(row.get("pct", 0) or 0)
 
-    waiting = is_waiting_for_trading_day()
-
-    # Before the trading day starts, show all live/daily values as zero and keep cards grey.
-    daily_pnl = 0.0 if waiting else raw_daily_pnl
-    daily_pct = 0.0 if waiting else raw_daily_pct
-
-    cls = "flat" if waiting else pnl_class(daily_pnl)
+    # Card background is daily/live status. Flat daily = grey.
+    cls = pnl_class(daily_pnl)
     child_class = " child-row" if child else ""
     name_class = "bot-name child-name" if child else "bot-name"
     equity_label = "Bot Equity" if child else "Equity"
@@ -1024,8 +936,6 @@ def render_row(row, child=False, rank=None):
         )
         trades_display = int(row.get("totaliser_trades", 0) or 0)
 
-    status_line = "<div class='tiny'>Status: waiting for trading day</div>" if waiting else ""
-
     card_html = (
         f'<div class="bot-row bot-row-{cls}{child_class}">'
         f'<div class="bot-topline">'
@@ -1035,9 +945,8 @@ def render_row(row, child=False, rank=None):
         f'<div class="bot-subline"><span>{equity_label} {money(row["equity"])}</span><span>Daily {daily_pnl:+,.0f} ({daily_pct:+.2f}%)</span>{allocation_text}</div>'
         f'{overall_html}'
         f'{totaliser_html}'
-        f'{status_line}'
         f'<div class="bot-subline"><span>Pos {row["positions"]}</span><span>Orders {row["orders"]}</span><span>Trades {trades_display}</span></div>'
-        f'<div class="tiny">{heartbeat_status(row["last_update"])} | Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
+        f'<div class="tiny">Last: {fmt_time(row["last_update"])} | {source_label}: {row["tab_name"]}{bot_id_text}</div>'
         f'</div>'
     )
     st.markdown(card_html, unsafe_allow_html=True)
@@ -1084,12 +993,11 @@ total_orders = sum(r["orders"] for r in fleet_rows)
 total_start = sum(float(r.get("start_equity", DEFAULT_START_EQUITY) or DEFAULT_START_EQUITY) for r in fleet_rows)
 total_since = total_equity - total_start
 total_since_pct = 0.0 if total_start == 0 else (total_since / total_start) * 100
-display_total_pnl = 0.0 if is_waiting_for_trading_day() else total_pnl
-cls = pnl_class(display_total_pnl)
-since_cls = pnl_class(display_total_pnl)
+cls = pnl_class(total_pnl)
+since_cls = pnl_class(total_pnl)
 
 st.markdown(
-    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {display_total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
+    f'''<div class="summary-card"><div class="summary-label">Total Fleet Equity</div><div class="summary-value">{money(total_equity)}</div><div class="summary-pnl-{cls}">Today P/L {total_pnl:+,.0f}</div><div class="since-line since-{since_cls}">Session reset {SESSION_RESET_HOUR_ET:02d}:00 ET | Session {current_session_key()}</div></div>''',
     unsafe_allow_html=True,
 )
 
@@ -1134,4 +1042,4 @@ if load_errors:
         for err in load_errors:
             st.warning(err)
 
-st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Before 04:00 ET, Today P/L is forced to +0 and cards stay grey. After 04:00 ET, Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
+st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Right-side Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
