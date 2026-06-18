@@ -170,6 +170,9 @@ BOT_SHEETS = [
         "spreadsheet_id": "1UO6F2RU0spc1JxvJUQT5Z38eD5nohmllcZ6wFH80RtU",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
+        # Markov Scout now writes daily_pl_alpaca to the snapshot sheet.
+        # Use that broker-source value for the card; keep trade rows for dropdown only.
+        "card_pnl_source": "snapshot",
     },
 {
         "name": "Markov Tech Hunter",
