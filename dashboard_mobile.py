@@ -106,6 +106,16 @@ BOT_SHEETS = [
         "spreadsheet_id": "1fRCRhiJ_5eNwJCBRW9EXwZRW4Gu6WkEXld_a760EiPY",
         "type": "single",
         "start_equity": DEFAULT_START_EQUITY,
+        # This account can log rows under the portfolio name and under its engines.
+        # Pick the newest matching heartbeat row, not the first/oldest matching tab.
+        "source_hints": [
+            "FUSION_PORTFOLIO",
+            "APEX FUSION PORTFOLIO",
+            "METALS_ORB",
+            "STRUCTURE_ORB",
+            "QUALITY_SIZER",
+        ],
+        "strict_source_hints": False,
     },
 {
         "name": "Fusion 15",
@@ -489,79 +499,83 @@ def render_trade_details(row, key_prefix=""):
     )
 
 
+def newest_time_from_df(df):
+    if df is None or df.empty or "timestamp" not in df.columns:
+        return pd.Timestamp.min
+    values = df["timestamp"].dropna()
+    if values.empty:
+        return pd.Timestamp.min
+    return values.iloc[-1]
+
+
+def newest_match(matches):
+    """Return the matching snapshot with the newest timestamp.
+
+    This matters for portfolio sheets where several tabs/rows can match the
+    display name or engine IDs. The heartbeat must follow the newest Google
+    Sheets write, not the first matching tab returned by the API.
+    """
+    if not matches:
+        return None, pd.DataFrame()
+    return max(matches, key=lambda item: newest_time_from_df(item[1]))
+
+
 def best_snapshot_for_name(snapshots, wanted_name, allow_fallback=True):
     if not snapshots:
         return None, pd.DataFrame()
 
     wanted = norm(wanted_name)
 
-    # 1) Exact worksheet title match.
-    for title, df in snapshots.items():
-        if norm(title) == wanted:
-            return title, df
+    # 1) Exact worksheet title matches. If more than one matches, use newest.
+    matches = [(title, df) for title, df in snapshots.items() if norm(title) == wanted]
+    if matches:
+        return newest_match(matches)
 
-    # 2) Exact/latest row identity match from bot_name/account_name/bot_id.
-    for title, df in snapshots.items():
-        if identity_matches(row_identity_text(df), wanted_name):
-            return title, df
+    # 2) Latest row identity match from bot_name/account_name/bot_id.
+    matches = [(title, df) for title, df in snapshots.items() if identity_matches(row_identity_text(df), wanted_name)]
+    if matches:
+        return newest_match(matches)
 
-    # 3) Partial worksheet title match.
-    for title, df in snapshots.items():
-        if wanted in norm(title) or norm(title) in wanted:
-            return title, df
+    # 3) Partial worksheet title match. Again, use newest matching tab.
+    matches = [(title, df) for title, df in snapshots.items() if wanted in norm(title) or norm(title) in wanted]
+    if matches:
+        return newest_match(matches)
 
     # 4) Fallback to newest tab only for single-account sheets. For grouped child
     # rows, fallback is disabled so the same newest tab is not reused incorrectly.
     if not allow_fallback:
         return None, pd.DataFrame()
 
-    newest_title = None
-    newest_time = None
-    for title, df in snapshots.items():
-        if "timestamp" in df.columns and not df["timestamp"].dropna().empty:
-            t = df["timestamp"].dropna().iloc[-1]
-        else:
-            t = pd.Timestamp.min
-        if newest_time is None or t > newest_time:
-            newest_title, newest_time = title, t
-    return newest_title, snapshots[newest_title]
+    return newest_match(list(snapshots.items()))
 
 
 def best_snapshot_by_hints(snapshots, source_hints, allow_fallback=True):
-    """Find a snapshot tab/row using explicit source hints.
+    """Find the newest snapshot tab/row using explicit source hints.
 
-    This is used for similarly named bots such as Fusion Portfolio and Fusion 15,
-    where a loose fallback can otherwise pick the wrong account tab.
+    This is used for similarly named bots and portfolio accounts. The previous
+    version returned the first matching tab, which can make the heartbeat look
+    offline while a newer engine/portfolio row is still writing to Sheets.
     """
     hints = [norm(h) for h in (source_hints or []) if str(h).strip()]
     if not hints:
         return None, pd.DataFrame()
 
+    matches = []
+
     # Prefer latest row identity text first because tab names can be generic.
     for title, df in snapshots.items():
         identity = norm(row_identity_text(df))
-        if any(h in identity for h in hints):
-            return title, df
-
-    # Then try worksheet title.
-    for title, df in snapshots.items():
         title_norm = norm(title)
-        if any(h in title_norm for h in hints):
-            return title, df
+        if any(h in identity or h in title_norm for h in hints):
+            matches.append((title, df))
+
+    if matches:
+        return newest_match(matches)
 
     if not allow_fallback:
         return None, pd.DataFrame()
 
-    newest_title = None
-    newest_time = None
-    for title, df in snapshots.items():
-        if "timestamp" in df.columns and not df["timestamp"].dropna().empty:
-            t = df["timestamp"].dropna().iloc[-1]
-        else:
-            t = pd.Timestamp.min
-        if newest_time is None or t > newest_time:
-            newest_title, newest_time = title, t
-    return newest_title, snapshots[newest_title]
+    return newest_match(list(snapshots.items()))
 
 
 def allocation_fraction(value):
