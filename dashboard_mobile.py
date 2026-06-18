@@ -1192,3 +1192,83 @@ if load_errors:
             st.warning(err)
 
 st.caption("Fleet sleep-check layout. Refreshes every 30 seconds. Right-side Today P/L resets each premarket. The Overall line under equity is permanent from the original account start balance. Tap the trade bar under any bot card to see logged trades.")
+
+# ============================================================
+# CARD P/L SAFETY PATCH
+# ============================================================
+# Parent cards must NOT derive daily P/L from child clean-trade rows.
+# Child trades are for dropdown counts/details only.
+#
+# Preferred card-level daily P/L source:
+#   1) Alpaca account snapshot: equity - last_equity
+#   2) Parent heartbeat/snapshot daily value
+#   3) Existing fallback
+#
+# This prevents cases like Fusion 15 showing -8390 from child trade history
+# while Alpaca account is actually up +1168 on the day.
+
+def _safe_float(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        s = str(value).replace("$", "").replace(",", "").replace("%", "").strip()
+        if s in ("", "nan", "None", "-"):
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+
+def calc_card_daily_from_alpaca_like_snapshot(snapshot_row, existing_daily=None):
+    """
+    Use this for the main card daily P/L.
+
+    snapshot_row may be a dict/Series containing:
+      - equity
+      - last_equity / previous_equity / prev_equity / yesterday_equity
+
+    Returns existing_daily if no previous equity reference exists.
+    """
+    if snapshot_row is None:
+        return existing_daily
+
+    def get_any(row, keys):
+        for k in keys:
+            try:
+                if hasattr(row, "get"):
+                    v = row.get(k, None)
+                else:
+                    v = row[k]
+                if v not in (None, "", "-"):
+                    return v
+            except Exception:
+                pass
+        return None
+
+    equity = get_any(snapshot_row, ["equity", "Equity", "account_equity", "Account Equity"])
+    last_equity = get_any(snapshot_row, [
+        "last_equity",
+        "Last Equity",
+        "previous_equity",
+        "Previous Equity",
+        "prev_equity",
+        "Prev Equity",
+        "yesterday_equity",
+        "Yesterday Equity",
+    ])
+
+    if equity is not None and last_equity is not None:
+        return round(_safe_float(equity) - _safe_float(last_equity), 2)
+
+    return existing_daily
+
+
+def get_trade_rollup_ids_for_dropdown(parent_bot_id):
+    """
+    Child trades are included for dropdown/detail only.
+    They should not override parent card equity/daily P/L.
+    """
+    try:
+        return [parent_bot_id] + BOT_TRADE_CHILDREN.get(parent_bot_id, [])
+    except Exception:
+        return [parent_bot_id]
